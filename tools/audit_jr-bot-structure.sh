@@ -3,7 +3,7 @@ set -euo pipefail
 
 # ==========================================================
 # JR-Bot Structure Audit
-# Version: 0.1.1
+# Version: 0.1.2
 # ==========================================================
 #
 # Purpose:
@@ -16,7 +16,7 @@ set -euo pipefail
 #   - config.ini / .env key presence only, without secret values
 #   - Python / venv status
 #   - systemd template and instance status
-#   - Optional upload to OPSCON via HTTPS POST
+#   - Optional upload to OPSCON via HTTPS POST multipart file upload
 #
 # Security:
 #   - No secrets are printed
@@ -30,13 +30,15 @@ set -euo pipefail
 #   ./audit_jr-bot-structure.sh --instance dmr --path ~/bots/DMR --legacy
 #
 #   ./audit_jr-bot-structure.sh \
-#     --instance trx \
-#     --path /opt/bots/trx \
-#     --push-url https://opscon.blenk.co.at/api/jrbot_audit_ingest.php
+#     --instance dmr \
+#     --path ~/bots/DMR \
+#     --legacy \
+#     --push-url https://opscon.blenk.co.at/api/jrbot_audit_ingest.php \
+#     --token <TOKEN>
 #
 # ==========================================================
 
-SCRIPT_VERSION="0.1.1"
+SCRIPT_VERSION="0.1.2"
 SCHEMA_VERSION="jrbot-structure-audit-v1"
 
 INSTANCE=""
@@ -93,9 +95,11 @@ Examples:
   ./audit_jr-bot-structure.sh --instance dmr --path ~/bots/DMR --legacy
 
   ./audit_jr-bot-structure.sh \
-    --instance trx \
-    --path /opt/bots/trx \
-    --push-url https://opscon.blenk.co.at/api/jrbot_audit_ingest.php
+    --instance dmr \
+    --path ~/bots/DMR \
+    --legacy \
+    --push-url https://opscon.blenk.co.at/api/jrbot_audit_ingest.php \
+    --token <TOKEN>
 EOF
 }
 
@@ -153,7 +157,6 @@ if [[ -z "$INSTALL_PATH" ]]; then
     die "Parameter fehlt: --path"
 fi
 
-# Expand leading ~ manually for paths passed as quoted strings.
 if [[ "$INSTALL_PATH" == "~/"* ]]; then
     INSTALL_PATH="${HOME}/${INSTALL_PATH#~/}"
 fi
@@ -342,13 +345,8 @@ TIMER_TEMPLATE="/etc/systemd/system/bot-runner@.timer"
 INSTANCE_SERVICE="bot-runner@${INSTANCE_LOWER}.service"
 INSTANCE_TIMER="bot-runner@${INSTANCE_LOWER}.timer"
 
-# Legacy hints for older DMR/GGB style services.
 LEGACY_SERVICE_1="/etc/systemd/system/${INSTANCE_LOWER}-runner.service"
 LEGACY_TIMER_1="/etc/systemd/system/${INSTANCE_LOWER}-runner.timer"
-
-# ----------------------------------------------------------
-# Require Python for safe JSON generation
-# ----------------------------------------------------------
 
 if ! command_exists python3; then
     die "python3 wird benötigt, um die Audit-JSON sicher zu erzeugen."
@@ -584,7 +582,7 @@ export JR_AUDIT_INSTANCE_SERVICE_ACTIVE_STATE="$(systemd_active_state "$INSTANCE
 export JR_AUDIT_INSTANCE_SERVICE_SUB_STATE="$(systemd_sub_state "$INSTANCE_SERVICE")"
 
 # ----------------------------------------------------------
-# Generate JSON via Python to avoid manual JSON escaping bugs
+# Generate JSON via Python
 # ----------------------------------------------------------
 
 python3 > "$OUTPUT_FILE" <<'PY'
@@ -636,38 +634,14 @@ data = {
         "boot_time": env("JR_AUDIT_BOOT_TIME")
     },
     "paths": {
-        "install_dir": {
-            "path": env("JR_AUDIT_INSTALL_PATH"),
-            "exists": env_bool("JR_AUDIT_INSTALL_DIR_EXISTS")
-        },
-        "config_dir": {
-            "path": env("JR_AUDIT_CONFIG_DIR"),
-            "exists": env_bool("JR_AUDIT_CONFIG_DIR_EXISTS")
-        },
-        "src_dir": {
-            "path": env("JR_AUDIT_SRC_DIR"),
-            "exists": env_bool("JR_AUDIT_SRC_DIR_EXISTS")
-        },
-        "logs_dir": {
-            "path": env("JR_AUDIT_LOGS_DIR"),
-            "exists": env_bool("JR_AUDIT_LOGS_DIR_EXISTS")
-        },
-        "state_dir": {
-            "path": env("JR_AUDIT_STATE_DIR"),
-            "exists": env_bool("JR_AUDIT_STATE_DIR_EXISTS")
-        },
-        "tmp_dir": {
-            "path": env("JR_AUDIT_TMP_DIR"),
-            "exists": env_bool("JR_AUDIT_TMP_DIR_EXISTS")
-        },
-        "venv_dir": {
-            "path": env("JR_AUDIT_VENV_DIR"),
-            "exists": env_bool("JR_AUDIT_VENV_DIR_EXISTS")
-        },
-        "data_dir": {
-            "path": env("JR_AUDIT_DATA_DIR"),
-            "exists": env_bool("JR_AUDIT_DATA_DIR_EXISTS")
-        }
+        "install_dir": {"path": env("JR_AUDIT_INSTALL_PATH"), "exists": env_bool("JR_AUDIT_INSTALL_DIR_EXISTS")},
+        "config_dir": {"path": env("JR_AUDIT_CONFIG_DIR"), "exists": env_bool("JR_AUDIT_CONFIG_DIR_EXISTS")},
+        "src_dir": {"path": env("JR_AUDIT_SRC_DIR"), "exists": env_bool("JR_AUDIT_SRC_DIR_EXISTS")},
+        "logs_dir": {"path": env("JR_AUDIT_LOGS_DIR"), "exists": env_bool("JR_AUDIT_LOGS_DIR_EXISTS")},
+        "state_dir": {"path": env("JR_AUDIT_STATE_DIR"), "exists": env_bool("JR_AUDIT_STATE_DIR_EXISTS")},
+        "tmp_dir": {"path": env("JR_AUDIT_TMP_DIR"), "exists": env_bool("JR_AUDIT_TMP_DIR_EXISTS")},
+        "venv_dir": {"path": env("JR_AUDIT_VENV_DIR"), "exists": env_bool("JR_AUDIT_VENV_DIR_EXISTS")},
+        "data_dir": {"path": env("JR_AUDIT_DATA_DIR"), "exists": env_bool("JR_AUDIT_DATA_DIR_EXISTS")}
     },
     "user": {
         "expected_user": env("JR_AUDIT_EXPECTED_USER"),
@@ -788,7 +762,10 @@ checks = {
     "job_runner_exists": data["files"]["job_runner"]["exists"],
     "config_or_env_exists": data["files"]["config_ini"]["exists"] or data["files"]["env_file"]["exists"],
     "venv_python_exists": data["python"]["venv_python_exists"],
-    "systemd_timer_known": data["systemd"]["instance_timer"]["load_state"] not in ("", "not-found")
+    "systemd_timer_known": (
+        data["systemd"]["instance_timer"]["load_state"] not in ("", "not-found")
+        or data["systemd"]["legacy_timer"]["exists"]
+    )
 }
 
 data["summary"] = {
@@ -798,10 +775,6 @@ data["summary"] = {
 
 print(json.dumps(data, indent=2, ensure_ascii=False))
 PY
-
-# ----------------------------------------------------------
-# Validate generated JSON
-# ----------------------------------------------------------
 
 if ! python3 -m json.tool "$OUTPUT_FILE" >/dev/null 2>&1; then
     die "Die erzeugte JSON-Datei ist ungültig: $OUTPUT_FILE"
@@ -835,16 +808,16 @@ if [[ -n "$PUSH_URL" ]]; then
 
     RESPONSE_FILE="$(mktemp /tmp/jrbot-audit-upload-response.XXXXXX.txt)"
 
-    info "Sende Audit-JSON an OPSCON..."
+    info "Sende Audit-JSON an OPSCON als Datei-Upload..."
 
     HTTP_CODE="$(curl -fsSL \
         -w "%{http_code}" \
         -o "$RESPONSE_FILE" \
         -X POST \
-        --data-urlencode "token=${TOKEN}" \
-        --data-urlencode "instance=${INSTANCE_LOWER}" \
-        --data-urlencode "mode=${MODE}" \
-        --data-urlencode "audit_json=$(cat "$OUTPUT_FILE")" \
+        -F "token=${TOKEN}" \
+        -F "instance=${INSTANCE_LOWER}" \
+        -F "mode=${MODE}" \
+        -F "audit_file=@${OUTPUT_FILE};type=application/json" \
         "$PUSH_URL" || true)"
 
     if [[ "$HTTP_CODE" != "200" ]]; then
@@ -853,6 +826,7 @@ if [[ -n "$PUSH_URL" ]]; then
             cat "$RESPONSE_FILE" >&2
             echo >&2
         fi
+        rm -f "$RESPONSE_FILE"
         exit 1
     fi
 
