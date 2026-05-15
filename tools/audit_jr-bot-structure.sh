@@ -3,7 +3,7 @@ set -euo pipefail
 
 # ==========================================================
 # JR-Bot Structure Audit
-# Version: 0.1.4
+# Version: 0.1.5
 # ==========================================================
 #
 # Purpose:
@@ -12,6 +12,7 @@ set -euo pipefail
 # This script collects:
 #   - Host / Raspberry Pi / OS information
 #   - Network information, local IP, gateway, SSH status
+#   - Storage information, SD/root filesystem, bot filesystem, block devices
 #   - Bot directory structure
 #   - File existence, permissions, owner/group
 #   - config.ini / .env key presence only, without secret values
@@ -44,17 +45,9 @@ set -euo pipefail
 #     --push-url https://opscon.blenk.co.at/api/jrbot_audit_ingest.php \
 #     --token <TOKEN>
 #
-#   ./audit_jr-bot-structure.sh \
-#     --instance dmr \
-#     --path ~/bots/DMR \
-#     --legacy \
-#     --keep-local \
-#     --push-url https://opscon.blenk.co.at/api/jrbot_audit_ingest.php \
-#     --token <TOKEN>
-#
 # ==========================================================
 
-SCRIPT_VERSION="0.1.4"
+SCRIPT_VERSION="0.1.5"
 SCHEMA_VERSION="jrbot-structure-audit-v1"
 
 INSTANCE=""
@@ -117,14 +110,6 @@ Examples:
     --instance dmr \
     --path ~/bots/DMR \
     --legacy \
-    --push-url https://opscon.blenk.co.at/api/jrbot_audit_ingest.php \
-    --token <TOKEN>
-
-  ./audit_jr-bot-structure.sh \
-    --instance dmr \
-    --path ~/bots/DMR \
-    --legacy \
-    --keep-local \
     --push-url https://opscon.blenk.co.at/api/jrbot_audit_ingest.php \
     --token <TOKEN>
 EOF
@@ -494,6 +479,21 @@ if systemctl_exists; then
 fi
 
 # ----------------------------------------------------------
+# Collect command availability for storage
+# ----------------------------------------------------------
+
+DF_COMMAND_EXISTS="false"
+LSBLK_COMMAND_EXISTS="false"
+
+if command_exists df; then
+    DF_COMMAND_EXISTS="true"
+fi
+
+if command_exists lsblk; then
+    LSBLK_COMMAND_EXISTS="true"
+fi
+
+# ----------------------------------------------------------
 # Collect Python values
 # ----------------------------------------------------------
 
@@ -582,6 +582,9 @@ export JR_AUDIT_SSH_SERVICE_ACTIVE="$SSH_SERVICE_ACTIVE"
 export JR_AUDIT_SSH_LOAD_STATE="$SSH_LOAD_STATE"
 export JR_AUDIT_SSH_ACTIVE_STATE="$SSH_ACTIVE_STATE"
 export JR_AUDIT_SSH_SUB_STATE="$SSH_SUB_STATE"
+
+export JR_AUDIT_DF_COMMAND_EXISTS="$DF_COMMAND_EXISTS"
+export JR_AUDIT_LSBLK_COMMAND_EXISTS="$LSBLK_COMMAND_EXISTS"
 
 export JR_AUDIT_INSTALL_PATH="$INSTALL_PATH"
 export JR_AUDIT_CONFIG_DIR="$CONFIG_DIR"
@@ -701,6 +704,8 @@ export JR_AUDIT_INSTANCE_SERVICE_SUB_STATE="$(systemd_sub_state "$INSTANCE_SERVI
 python3 > "$OUTPUT_FILE" <<'PY'
 import json
 import os
+import subprocess
+from typing import Any
 
 
 def env(name: str, default: str = "") -> str:
@@ -727,6 +732,169 @@ def env_list(name: str):
         return []
     return [item for item in value.split() if item]
 
+
+def run_command(args: list[str]) -> tuple[int, str, str]:
+    try:
+        proc = subprocess.run(
+            args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False
+        )
+        return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
+    except Exception as exc:
+        return 999, "", str(exc)
+
+
+def parse_df_bytes(path: str) -> dict[str, Any]:
+    result = {
+        "path": path,
+        "available": False,
+        "error": "",
+        "filesystem": "",
+        "type": "",
+        "mountpoint": "",
+        "size_total_bytes": None,
+        "size_used_bytes": None,
+        "size_available_bytes": None,
+        "use_percent": "",
+        "human": {
+            "size_total": "",
+            "size_used": "",
+            "size_available": "",
+            "use_percent": ""
+        }
+    }
+
+    code, out, err = run_command(["df", "-P", "-B1", path])
+    if code != 0 or not out:
+        result["error"] = err or "df returned no output"
+        return result
+
+    lines = out.splitlines()
+    if len(lines) < 2:
+        result["error"] = "df output incomplete"
+        return result
+
+    parts = lines[1].split()
+    if len(parts) < 6:
+        result["error"] = "df output parse failed"
+        return result
+
+    result["filesystem"] = parts[0]
+    result["size_total_bytes"] = int(parts[1]) if parts[1].isdigit() else None
+    result["size_used_bytes"] = int(parts[2]) if parts[2].isdigit() else None
+    result["size_available_bytes"] = int(parts[3]) if parts[3].isdigit() else None
+    result["use_percent"] = parts[4]
+    result["mountpoint"] = parts[5]
+    result["available"] = True
+
+    code_h, out_h, _ = run_command(["df", "-hT", path])
+    if code_h == 0 and out_h:
+        h_lines = out_h.splitlines()
+        if len(h_lines) >= 2:
+            h_parts = h_lines[1].split()
+            if len(h_parts) >= 7:
+                result["type"] = h_parts[1]
+                result["human"] = {
+                    "size_total": h_parts[2],
+                    "size_used": h_parts[3],
+                    "size_available": h_parts[4],
+                    "use_percent": h_parts[5]
+                }
+
+    return result
+
+
+def parse_df_all() -> list[dict[str, Any]]:
+    code, out, _ = run_command(["df", "-hT"])
+    if code != 0 or not out:
+        return []
+
+    rows = []
+    lines = out.splitlines()[1:]
+
+    for line in lines:
+        parts = line.split()
+        if len(parts) < 7:
+            continue
+
+        filesystem = parts[0]
+        fs_type = parts[1]
+        size_total = parts[2]
+        size_used = parts[3]
+        size_available = parts[4]
+        use_percent = parts[5]
+        mountpoint = parts[6]
+
+        # Keep relevant mounted filesystems, skip most volatile internals.
+        if fs_type in ("tmpfs", "devtmpfs", "squashfs"):
+            continue
+
+        rows.append({
+            "filesystem": filesystem,
+            "type": fs_type,
+            "size_total": size_total,
+            "size_used": size_used,
+            "size_available": size_available,
+            "use_percent": use_percent,
+            "mountpoint": mountpoint
+        })
+
+    return rows
+
+
+def parse_lsblk() -> dict[str, Any]:
+    result = {
+        "available": False,
+        "error": "",
+        "raw_json": None
+    }
+
+    code, out, err = run_command([
+        "lsblk",
+        "-J",
+        "-o",
+        "NAME,TYPE,SIZE,FSTYPE,MOUNTPOINT,MODEL,RM,RO,TRAN"
+    ])
+
+    if code != 0 or not out:
+        result["error"] = err or "lsblk returned no output"
+        return result
+
+    try:
+        result["raw_json"] = json.loads(out)
+        result["available"] = True
+    except json.JSONDecodeError as exc:
+        result["error"] = f"Could not parse lsblk JSON: {exc}"
+
+    return result
+
+
+root_fs = parse_df_bytes("/")
+bot_path = env("JR_AUDIT_INSTALL_PATH")
+bot_fs = parse_df_bytes(bot_path)
+all_filesystems = parse_df_all()
+block_devices = parse_lsblk()
+
+storage_warnings = []
+
+for label, fs_data in (("root", root_fs), ("bot", bot_fs)):
+    free_bytes = fs_data.get("size_available_bytes")
+    if isinstance(free_bytes, int):
+        if free_bytes < 500 * 1024 * 1024:
+            storage_warnings.append({
+                "level": "critical",
+                "target": label,
+                "message": "Less than 500 MB free disk space."
+            })
+        elif free_bytes < 2 * 1024 * 1024 * 1024:
+            storage_warnings.append({
+                "level": "warning",
+                "target": label,
+                "message": "Less than 2 GB free disk space."
+            })
 
 data = {
     "schema": env("JR_AUDIT_SCHEMA_VERSION"),
@@ -768,6 +936,17 @@ data = {
             "active_state": env("JR_AUDIT_SSH_ACTIVE_STATE"),
             "sub_state": env("JR_AUDIT_SSH_SUB_STATE")
         }
+    },
+    "storage": {
+        "commands_available": {
+            "df": env_bool("JR_AUDIT_DF_COMMAND_EXISTS"),
+            "lsblk": env_bool("JR_AUDIT_LSBLK_COMMAND_EXISTS")
+        },
+        "root_filesystem": root_fs,
+        "bot_filesystem": bot_fs,
+        "mounted_filesystems": all_filesystems,
+        "block_devices": block_devices,
+        "warnings": storage_warnings
     },
     "paths": {
         "install_dir": {"path": env("JR_AUDIT_INSTALL_PATH"), "exists": env_bool("JR_AUDIT_INSTALL_DIR_EXISTS")},
@@ -901,7 +1080,9 @@ checks = {
     "systemd_timer_known": (
         data["systemd"]["instance_timer"]["load_state"] not in ("", "not-found")
         or data["systemd"]["legacy_timer"]["exists"]
-    )
+    ),
+    "storage_root_available": data["storage"]["root_filesystem"]["available"],
+    "storage_bot_available": data["storage"]["bot_filesystem"]["available"]
 }
 
 data["summary"] = {
