@@ -3,7 +3,7 @@ set -euo pipefail
 
 # ==========================================================
 # JR-Bot Structure Audit
-# Version: 0.1.2
+# Version: 0.1.3
 # ==========================================================
 #
 # Purpose:
@@ -11,6 +11,7 @@ set -euo pipefail
 #
 # This script collects:
 #   - Host / Raspberry Pi / OS information
+#   - Network information, local IP, gateway, SSH status
 #   - Bot directory structure
 #   - File existence, permissions, owner/group
 #   - config.ini / .env key presence only, without secret values
@@ -38,7 +39,7 @@ set -euo pipefail
 #
 # ==========================================================
 
-SCRIPT_VERSION="0.1.2"
+SCRIPT_VERSION="0.1.3"
 SCHEMA_VERSION="jrbot-structure-audit-v1"
 
 INSTANCE=""
@@ -322,6 +323,11 @@ systemd_sub_state() {
     fi
 }
 
+first_ipv4_from_list() {
+    local raw="$1"
+    echo "$raw" | tr ' ' '\n' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -n1 || true
+}
+
 # ----------------------------------------------------------
 # Determine important paths
 # ----------------------------------------------------------
@@ -401,6 +407,65 @@ if [[ -r /proc/meminfo ]]; then
     MEMORY_TOTAL_MB="$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)"
 fi
 
+# ----------------------------------------------------------
+# Collect network values
+# ----------------------------------------------------------
+
+HOSTNAME_I=""
+if command_exists hostname; then
+    HOSTNAME_I="$(hostname -I 2>/dev/null | xargs || true)"
+fi
+
+ALL_IPV4=""
+if command_exists ip; then
+    ALL_IPV4="$(ip -o -4 addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | paste -sd ' ' - || true)"
+fi
+
+PRIMARY_IPV4=""
+PRIMARY_INTERFACE=""
+DEFAULT_GATEWAY=""
+DEFAULT_ROUTE=""
+
+if command_exists ip; then
+    DEFAULT_ROUTE="$(ip route 2>/dev/null | grep '^default ' | head -n1 || true)"
+    PRIMARY_INTERFACE="$(echo "$DEFAULT_ROUTE" | awk '{for (i=1; i<=NF; i++) if ($i=="dev") print $(i+1)}' | head -n1 || true)"
+    DEFAULT_GATEWAY="$(echo "$DEFAULT_ROUTE" | awk '{for (i=1; i<=NF; i++) if ($i=="via") print $(i+1)}' | head -n1 || true)"
+
+    PRIMARY_IPV4="$(ip route get 1.1.1.1 2>/dev/null | awk '{for (i=1; i<=NF; i++) if ($i=="src") print $(i+1)}' | head -n1 || true)"
+fi
+
+if [[ -z "$PRIMARY_IPV4" ]]; then
+    PRIMARY_IPV4="$(first_ipv4_from_list "$HOSTNAME_I")"
+fi
+
+if [[ -z "$PRIMARY_IPV4" ]]; then
+    PRIMARY_IPV4="$(first_ipv4_from_list "$ALL_IPV4")"
+fi
+
+SSH_SERVICE_EXISTS="false"
+SSH_SERVICE_ENABLED="false"
+SSH_SERVICE_ACTIVE="false"
+SSH_LOAD_STATE=""
+SSH_ACTIVE_STATE=""
+SSH_SUB_STATE=""
+
+if systemctl_exists; then
+    SSH_LOAD_STATE="$(systemctl show ssh -p LoadState --value 2>/dev/null || echo "")"
+    SSH_ACTIVE_STATE="$(systemctl show ssh -p ActiveState --value 2>/dev/null || echo "")"
+    SSH_SUB_STATE="$(systemctl show ssh -p SubState --value 2>/dev/null || echo "")"
+
+    if [[ "$SSH_LOAD_STATE" != "" && "$SSH_LOAD_STATE" != "not-found" ]]; then
+        SSH_SERVICE_EXISTS="true"
+    fi
+
+    SSH_SERVICE_ENABLED="$(systemd_is_enabled ssh)"
+    SSH_SERVICE_ACTIVE="$(systemd_is_active ssh)"
+fi
+
+# ----------------------------------------------------------
+# Collect Python values
+# ----------------------------------------------------------
+
 SYSTEM_PYTHON_VERSION=""
 if command_exists python3; then
     SYSTEM_PYTHON_VERSION="$(python3 --version 2>&1 || true)"
@@ -424,6 +489,10 @@ if [[ -x "${VENV_DIR}/bin/python" ]]; then
         DOTENV_IMPORT="true"
     fi
 fi
+
+# ----------------------------------------------------------
+# Collect user and permission values
+# ----------------------------------------------------------
 
 USER_EXISTS="false"
 USER_UID=""
@@ -469,6 +538,19 @@ export JR_AUDIT_CPU_MODEL="$CPU_MODEL"
 export JR_AUDIT_CPU_REVISION="$CPU_REVISION"
 export JR_AUDIT_MEMORY_TOTAL_MB="$MEMORY_TOTAL_MB"
 export JR_AUDIT_BOOT_TIME="$UPTIME_SINCE"
+
+export JR_AUDIT_HOSTNAME_I="$HOSTNAME_I"
+export JR_AUDIT_ALL_IPV4="$ALL_IPV4"
+export JR_AUDIT_PRIMARY_IPV4="$PRIMARY_IPV4"
+export JR_AUDIT_PRIMARY_INTERFACE="$PRIMARY_INTERFACE"
+export JR_AUDIT_DEFAULT_GATEWAY="$DEFAULT_GATEWAY"
+export JR_AUDIT_DEFAULT_ROUTE="$DEFAULT_ROUTE"
+export JR_AUDIT_SSH_SERVICE_EXISTS="$SSH_SERVICE_EXISTS"
+export JR_AUDIT_SSH_SERVICE_ENABLED="$SSH_SERVICE_ENABLED"
+export JR_AUDIT_SSH_SERVICE_ACTIVE="$SSH_SERVICE_ACTIVE"
+export JR_AUDIT_SSH_LOAD_STATE="$SSH_LOAD_STATE"
+export JR_AUDIT_SSH_ACTIVE_STATE="$SSH_ACTIVE_STATE"
+export JR_AUDIT_SSH_SUB_STATE="$SSH_SUB_STATE"
 
 export JR_AUDIT_INSTALL_PATH="$INSTALL_PATH"
 export JR_AUDIT_CONFIG_DIR="$CONFIG_DIR"
@@ -608,6 +690,13 @@ def env_int_or_none(name: str):
         return value
 
 
+def env_list(name: str):
+    value = env(name)
+    if value.strip() == "":
+        return []
+    return [item for item in value.split() if item]
+
+
 data = {
     "schema": env("JR_AUDIT_SCHEMA_VERSION"),
     "script_version": env("JR_AUDIT_SCRIPT_VERSION"),
@@ -632,6 +721,22 @@ data = {
         "cpu_revision": env("JR_AUDIT_CPU_REVISION"),
         "memory_total_mb": env_int_or_none("JR_AUDIT_MEMORY_TOTAL_MB"),
         "boot_time": env("JR_AUDIT_BOOT_TIME")
+    },
+    "network": {
+        "hostname_i": env("JR_AUDIT_HOSTNAME_I"),
+        "all_ipv4": env_list("JR_AUDIT_ALL_IPV4"),
+        "primary_ipv4": env("JR_AUDIT_PRIMARY_IPV4"),
+        "primary_interface": env("JR_AUDIT_PRIMARY_INTERFACE"),
+        "default_gateway": env("JR_AUDIT_DEFAULT_GATEWAY"),
+        "default_route": env("JR_AUDIT_DEFAULT_ROUTE"),
+        "ssh": {
+            "service_exists": env_bool("JR_AUDIT_SSH_SERVICE_EXISTS"),
+            "enabled": env_bool("JR_AUDIT_SSH_SERVICE_ENABLED"),
+            "active": env_bool("JR_AUDIT_SSH_SERVICE_ACTIVE"),
+            "load_state": env("JR_AUDIT_SSH_LOAD_STATE"),
+            "active_state": env("JR_AUDIT_SSH_ACTIVE_STATE"),
+            "sub_state": env("JR_AUDIT_SSH_SUB_STATE")
+        }
     },
     "paths": {
         "install_dir": {"path": env("JR_AUDIT_INSTALL_PATH"), "exists": env_bool("JR_AUDIT_INSTALL_DIR_EXISTS")},
