@@ -3,7 +3,7 @@ set -euo pipefail
 
 # ==========================================================
 # JR-Bot Structure Audit
-# Version: 0.1.3
+# Version: 0.1.4
 # ==========================================================
 #
 # Purpose:
@@ -25,6 +25,13 @@ set -euo pipefail
 #   - Only key presence is reported
 #   - The script does not modify the system
 #
+# Local file behavior:
+#   - Default output is a temporary file under /tmp.
+#   - If upload succeeds and no --keep-local was set, the temp file is deleted.
+#   - If --output <file> is set, the file is kept.
+#   - If --keep-local is set, the file is kept.
+#   - If upload fails, the file is kept for debugging.
+#
 # Examples:
 #   ./audit_jr-bot-structure.sh --instance trx --path /opt/bots/trx
 #
@@ -37,9 +44,17 @@ set -euo pipefail
 #     --push-url https://opscon.blenk.co.at/api/jrbot_audit_ingest.php \
 #     --token <TOKEN>
 #
+#   ./audit_jr-bot-structure.sh \
+#     --instance dmr \
+#     --path ~/bots/DMR \
+#     --legacy \
+#     --keep-local \
+#     --push-url https://opscon.blenk.co.at/api/jrbot_audit_ingest.php \
+#     --token <TOKEN>
+#
 # ==========================================================
 
-SCRIPT_VERSION="0.1.3"
+SCRIPT_VERSION="0.1.4"
 SCHEMA_VERSION="jrbot-structure-audit-v1"
 
 INSTANCE=""
@@ -48,7 +63,9 @@ MODE="target"
 PUSH_URL=""
 TOKEN=""
 OUTPUT_FILE=""
+OUTPUT_FILE_USER_SET="false"
 PRINT_JSON="false"
+KEEP_LOCAL="false"
 
 # ----------------------------------------------------------
 # Output helpers
@@ -86,7 +103,8 @@ Options:
   --legacy                Legacy mode for older DMR/GGB structures
   --push-url <url>        Optional OPSCON ingest endpoint
   --token <token>         Optional OPSCON audit token
-  --output <file>         Optional output JSON file
+  --output <file>         Optional output JSON file. File will be kept.
+  --keep-local            Keep generated local JSON after successful upload
   --print-json            Print JSON to stdout
   -h, --help              Show this help
 
@@ -99,6 +117,14 @@ Examples:
     --instance dmr \
     --path ~/bots/DMR \
     --legacy \
+    --push-url https://opscon.blenk.co.at/api/jrbot_audit_ingest.php \
+    --token <TOKEN>
+
+  ./audit_jr-bot-structure.sh \
+    --instance dmr \
+    --path ~/bots/DMR \
+    --legacy \
+    --keep-local \
     --push-url https://opscon.blenk.co.at/api/jrbot_audit_ingest.php \
     --token <TOKEN>
 EOF
@@ -132,7 +158,12 @@ while [[ $# -gt 0 ]]; do
             ;;
         --output)
             OUTPUT_FILE="${2:-}"
+            OUTPUT_FILE_USER_SET="true"
             shift 2
+            ;;
+        --keep-local)
+            KEEP_LOCAL="true"
+            shift
             ;;
         --print-json)
             PRINT_JSON="true"
@@ -895,6 +926,8 @@ fi
 # Optional OPSCON upload
 # ----------------------------------------------------------
 
+UPLOAD_SUCCESS="false"
+
 if [[ -n "$PUSH_URL" ]]; then
     if ! command_exists curl; then
         die "curl wird für den Upload benötigt."
@@ -932,8 +965,11 @@ if [[ -n "$PUSH_URL" ]]; then
             echo >&2
         fi
         rm -f "$RESPONSE_FILE"
+        warn "Lokale Audit-Datei bleibt für Debugging erhalten: ${OUTPUT_FILE}"
         exit 1
     fi
+
+    UPLOAD_SUCCESS="true"
 
     info "Upload erfolgreich."
     if [[ -s "$RESPONSE_FILE" ]]; then
@@ -944,4 +980,19 @@ if [[ -n "$PUSH_URL" ]]; then
     rm -f "$RESPONSE_FILE"
 fi
 
-echo "Audit completed: ${OUTPUT_FILE}"
+# ----------------------------------------------------------
+# Local file cleanup
+# ----------------------------------------------------------
+
+if [[ "$UPLOAD_SUCCESS" == "true" ]]; then
+    if [[ "$KEEP_LOCAL" == "true" ]]; then
+        info "Lokale Audit-Datei bleibt erhalten wegen --keep-local: ${OUTPUT_FILE}"
+    elif [[ "$OUTPUT_FILE_USER_SET" == "true" ]]; then
+        info "Lokale Audit-Datei bleibt erhalten wegen --output: ${OUTPUT_FILE}"
+    else
+        rm -f "$OUTPUT_FILE"
+        info "Lokale temporäre Audit-Datei wurde nach erfolgreichem Upload gelöscht."
+    fi
+else
+    info "Audit completed: ${OUTPUT_FILE}"
+fi
