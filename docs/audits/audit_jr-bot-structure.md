@@ -4,99 +4,95 @@ Status: Active
 Handbook Version: 1.0  
 Script Version Reference: 0.1.6  
 Project: JR-Bot / OPSCON  
-Last Updated: 2026-05-27  
+Recommended Path: `docs/audits/audit_jr-bot-structure.md`
 
 ---
 
 ## 1. Purpose
 
-`audit_jr-bot-structure.sh` ist das zentrale Structure-Audit-Script für JR-Bot Nodes.
+`audit_jr-bot-structure.sh` is the main read-only structure audit script for JR-Bot nodes.
 
-Das Script prüft lesend, wie ein JR-Bot auf einem Raspberry Pi oder vergleichbaren Linux-Node installiert ist. Es sammelt technische Informationen über Host, Netzwerk, Storage, Python-Umgebung, Bot-Verzeichnisstruktur, Runtime-Dateien, Systemd-Integration und bekannte Wartungsscripte.
+Its purpose is to inspect how a JR-Bot instance is currently installed on a Raspberry Pi or Linux node. The script collects structured information about the host, network baseline, storage, Python environment, bot directory layout, runtime files, systemd integration, known maintenance scripts, and profile state.
 
-Das Ziel ist nicht, den Bot zu reparieren oder automatisch umzubauen. Das Ziel ist eine reproduzierbare, sichere und maschinenlesbare Bestandsaufnahme.
+The script does **not** repair, migrate, restart, or modify the bot.
 
-Das Script ist besonders wichtig für:
+Its output is a JSON report that can be:
 
-- Vergleich von alten und neuen JR-Bot Installationen
-- Erkennung von Legacy-, Hybrid- und Zielstrukturen
-- Vorbereitung von Migrationen
-- OPSCON Monitoring
-- spätere JR-Agent Analyse
-- One-Liner Installer Validierung
-- Nachvollziehbarkeit von Strukturabweichungen
+- reviewed manually,
+- uploaded to OPSCON,
+- compared across nodes,
+- used by future JR-Agent logic,
+- used to validate the One-Liner installer output,
+- used as a migration baseline.
 
 ---
 
-## 2. Rolle im JR-Bot / OPSCON System
+## 2. Core Role in the JR-Bot Ecosystem
 
-Das Structure-Audit ist eines von mehreren Diagnose- und Reporting-Werkzeugen.
+The Structure Audit answers one central question:
 
-Es beantwortet primär die Frage:
+> How is this JR-Bot currently built and installed?
 
-> Wie ist dieser JR-Bot aktuell aufgebaut?
+It is not a network deep-dive and it is not a boot report.
 
-Es ist damit kein Live-Health-Check und kein Boot-Report.
+### Related Audit / Report Types
 
-### Abgrenzung zu anderen Scripts
-
-| Script | Zweck |
+| Tool | Purpose |
 |---|---|
-| `audit_jr-bot-structure.sh` | Prüft Struktur, Dateien, Verzeichnisse, Python, Systemd, Bot-Profil |
-| `audit_jr-bot-network-health.sh` | Prüft Netzwerkdienste, WLAN, DHCP, Routen, DNS, Connectivity |
-| `jrbot_boot_report.sh` | Sammelt Boot-Zustand kurz nach Neustart und meldet ihn an OPSCON |
-| `reboot.sh` | Führt kontrollierten Reboot über Maintenance-Job aus |
+| `audit_jr-bot-structure.sh` | Directory structure, runtime files, Python, systemd, profile detection |
+| `audit_jr-bot-network-health.sh` | Network stack, WLAN/DHCP, routes, DNS, connectivity, network services |
+| `jrbot_boot_report.sh` | Post-boot state report after a reboot |
+| `reboot.sh` | Controlled maintenance reboot script |
 
-Das Structure-Audit ist daher die richtige Wahl, wenn unklar ist:
+Use the Structure Audit when the question is about:
 
-- Welche Ordner existieren?
-- Welche Runtime-Struktur liegt vor?
-- Ist der Bot legacy, template oder hybrid?
-- Fehlen Wartungsscripte?
-- Welche systemd-Units sind vorhanden?
-- Wo liegen Audit-Scripte aktuell?
-- Gibt es `.env` oder `config.ini`?
-- Ist die Python-venv vorhanden und funktionsfähig?
+- bot installation layout,
+- missing folders,
+- missing maintenance scripts,
+- legacy vs. template state,
+- systemd runner style,
+- Python runtime readiness,
+- local configuration file type,
+- storage size and filesystem basics,
+- whether a bot matches the expected One-Liner target structure.
 
 ---
 
-## 3. Sicherheitsprinzip
+## 3. Security Model
 
-Das Script ist bewusst read-only.
+The script is intentionally read-only.
 
-Es führt keine Änderungen am Zielsystem durch.
+It does not:
 
-### Sicherheitsregeln
+- create files,
+- delete files,
+- modify config,
+- restart services,
+- stop services,
+- install packages,
+- change permissions,
+- expose secret values.
 
-- Keine Secrets werden ausgegeben.
-- Keine Tokenwerte werden aus `.env` oder `config.ini` ausgelesen.
-- Es wird nur geprüft, ob bestimmte Keys vorhanden sind.
-- Config-Inhalte werden nicht vollständig übertragen.
-- Das Script verändert keine Dateien.
-- Das Script startet oder stoppt keine Dienste.
-- Der Upload an OPSCON erfolgt nur optional.
-- Lokale temporäre JSON-Dateien werden nach erfolgreichem Upload entfernt, außer `--keep-local` oder `--output` wurde gesetzt.
+### Secret Handling
 
-### Secrets
+The script checks only whether expected keys exist. It does not include their values in the JSON output.
 
-Folgende Werte werden nur auf Key-Existenz geprüft:
+Examples of checked keys:
 
+- `PROJECT_NAME`
+- `BOT_NAME`
+- `INSTANCE_NAME`
 - `SERVER_BASE`
 - `SERVER_TOKEN`
 - `PING_TOKEN`
-- `BOT_NAME`
-- `PROJECT_NAME`
-- `INSTANCE_NAME`
 
-Der Wert selbst wird nicht in die Audit-JSON geschrieben.
+### Security Flags in JSON
 
----
+The generated JSON includes:
 
-## 4. Typische Aufrufe
-
-### Lokaler Audit ohne Upload
-
-```bash
-./audit_jr-bot-structure.sh \
-  --instance trx \
-  --path /opt/bots/trx
+```json
+"security": {
+  "read_only": true,
+  "secrets_redacted": true,
+  "secret_values_included": false
+}
