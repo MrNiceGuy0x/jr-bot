@@ -10,72 +10,63 @@ Recommended Path: `docs/audits/audit_jr-bot-structure.md`
 
 ## 1. Purpose
 
-`audit_jr-bot-structure.sh` is the main read-only structure audit script for JR-Bot nodes.
+`audit_jr-bot-structure.sh` is the central read-only structure audit script for JR-Bot nodes.
 
-Its purpose is to inspect how a JR-Bot instance is currently installed on a Raspberry Pi or Linux node. The script collects structured information about the host, network baseline, storage, Python environment, bot directory layout, runtime files, systemd integration, known maintenance scripts, and profile state.
+Its purpose is to create a reliable, machine-readable inventory of how a JR-Bot node is installed, configured and integrated into the operating system.
 
-The script does **not** repair, migrate, restart, or modify the bot.
+The script does **not** repair, migrate or modify the bot. It only collects information and optionally uploads the generated JSON report to OPSCON.
 
-Its output is a JSON report that can be:
+The audit is used to answer questions such as:
 
-- reviewed manually,
-- uploaded to OPSCON,
-- compared across nodes,
-- used by future JR-Agent logic,
-- used to validate the One-Liner installer output,
-- used as a migration baseline.
+- Which JR-Bot structure is installed on this node?
+- Is the node a legacy, hybrid or target-layout installation?
+- Which directories are present or missing?
+- Which maintenance scripts exist?
+- Does the bot use `.env` or `config.ini`?
+- Is the Python virtual environment present?
+- Are systemd service and timer units installed?
+- Is the node prepared for future One-Liner / JR-Agent workflows?
+- What deviations from the current target structure exist?
 
 ---
 
-## 2. Core Role in the JR-Bot Ecosystem
+## 2. Role in the JR-Bot / OPSCON Ecosystem
 
-The Structure Audit answers one central question:
+The JR-Bot project uses several audit and reporting scripts. Each script has a different purpose.
 
-> How is this JR-Bot currently built and installed?
-
-It is not a network deep-dive and it is not a boot report.
-
-### Related Audit / Report Types
-
-| Tool | Purpose |
+| Script | Primary Purpose |
 |---|---|
-| `audit_jr-bot-structure.sh` | Directory structure, runtime files, Python, systemd, profile detection |
-| `audit_jr-bot-network-health.sh` | Network stack, WLAN/DHCP, routes, DNS, connectivity, network services |
-| `jrbot_boot_report.sh` | Post-boot state report after a reboot |
-| `reboot.sh` | Controlled maintenance reboot script |
+| `audit_jr-bot-structure.sh` | Audits bot structure, files, directories, Python, systemd and runtime layout |
+| `audit_jr-bot-network-health.sh` | Audits network stack, WLAN, DHCP, routes, DNS, connectivity and network services |
+| `jrbot_boot_report.sh` | Reports the system state shortly after boot |
+| `reboot.sh` | Performs controlled node reboots from maintenance jobs |
 
-Use the Structure Audit when the question is about:
+The structure audit is the correct tool when the main question is:
 
-- bot installation layout,
-- missing folders,
-- missing maintenance scripts,
-- legacy vs. template state,
-- systemd runner style,
-- Python runtime readiness,
-- local configuration file type,
-- storage size and filesystem basics,
-- whether a bot matches the expected One-Liner target structure.
+> How is this JR-Bot node currently built?
+
+It is not intended as a deep network diagnostic tool and does not replace the network-health audit.
 
 ---
 
 ## 3. Security Model
 
-The script is intentionally read-only.
+The script is designed to be read-only and safe for recurring execution.
 
-It does not:
+### Security Principles
 
-- create files,
-- delete files,
-- modify config,
-- restart services,
-- stop services,
-- install packages,
-- change permissions,
-- expose secret values.
+- No system files are modified.
+- No services are restarted.
+- No packages are installed or removed.
+- Secret values are not printed.
+- Config files are not uploaded in full.
+- Only the presence of expected config keys is reported.
+- Upload to OPSCON is optional.
+- Temporary local reports are removed after successful upload unless explicitly kept.
 
 ### Secret Handling
 
-The script checks only whether expected keys exist. It does not include their values in the JSON output.
+The script checks whether expected keys exist, but it does not include their values in the JSON report.
 
 Examples of checked keys:
 
@@ -86,13 +77,11 @@ Examples of checked keys:
 - `SERVER_TOKEN`
 - `PING_TOKEN`
 
-### Security Flags in JSON
-
-The generated JSON includes:
+The JSON report only contains boolean values such as:
 
 ```json
-"security": {
-  "read_only": true,
-  "secrets_redacted": true,
-  "secret_values_included": false
+"contains_keys": {
+  "SERVER_BASE": true,
+  "SERVER_TOKEN": true,
+  "PING_TOKEN": false
 }
