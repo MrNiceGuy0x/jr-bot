@@ -3,7 +3,7 @@ set -euo pipefail
 
 # ==========================================================
 # JR-Bot Network Health Audit
-# Version: 0.1.0
+# Version: 0.1.1
 # ==========================================================
 #
 # Purpose:
@@ -64,25 +64,34 @@ set -euo pipefail
 #   - If --keep-local is set, the file is kept.
 #   - If upload fails, the file is kept for debugging.
 #
+# OPSCON endpoint:
+#   https://opscon.blenk.co.at/api/jrbot_audit_network_health_ingest.php
+#
+# OPSCON storage model:
+#   /OPSCON/data/audit_jr-bot-network-health/<instance>/
+#   ├── audit_jr-bot-network-health-<instance>.json
+#   └── history/
+#       └── audit_jr-bot-network-health-<instance>-YYYYMMDD_HHMMSS.json
+#
 # Example local debug:
 #   ./audit_jr-bot-network-health.sh \
 #     --instance ggb \
 #     --path ~/bots/ggb \
 #     --legacy \
-#     --output ~/jrbot-network-health-ggb-local-debug.json \
+#     --output ~/audit_jr-bot-network-health-ggb-local-debug.json \
 #     --print-summary
 #
-# Example OPSCON upload, after endpoint exists:
+# Example OPSCON upload:
 #   ./audit_jr-bot-network-health.sh \
 #     --instance ggb \
 #     --path ~/bots/ggb \
 #     --legacy \
-#     --push-url https://opscon.blenk.co.at/api/jrbot_network_health_ingest.php \
+#     --push-url https://opscon.blenk.co.at/api/jrbot_audit_network_health_ingest.php \
 #     --token <TOKEN>
 #
 # ==========================================================
 
-SCRIPT_VERSION="0.1.0"
+SCRIPT_VERSION="0.1.1"
 SCHEMA_VERSION="jrbot-network-health-audit-v1"
 
 INSTANCE=""
@@ -102,26 +111,10 @@ ETH_INTERFACE="eth0"
 MAX_FILE_BYTES="12000"
 MAX_JOURNAL_LINES="120"
 
-# ----------------------------------------------------------
-# Output helpers
-# ----------------------------------------------------------
-
-info() {
-    echo "[INFO] $*" >&2
-}
-
-warn() {
-    echo "[WARN] $*" >&2
-}
-
-error() {
-    echo "[ERROR] $*" >&2
-}
-
-die() {
-    error "$*"
-    exit 1
-}
+info() { echo "[INFO] $*" >&2; }
+warn() { echo "[WARN] $*" >&2; }
+error() { echo "[ERROR] $*" >&2; }
+die() { error "$*"; exit 1; }
 
 usage() {
     cat <<'EOF'
@@ -155,96 +148,40 @@ Examples:
     --instance ggb \
     --path ~/bots/ggb \
     --legacy \
-    --output ~/jrbot-network-health-ggb-local-debug.json \
+    --output ~/audit_jr-bot-network-health-ggb-local-debug.json \
     --print-summary
 
   ./audit_jr-bot-network-health.sh \
     --instance dmr \
     --path ~/bots/DMR \
     --legacy \
-    --push-url https://opscon.blenk.co.at/api/jrbot_network_health_ingest.php \
+    --push-url https://opscon.blenk.co.at/api/jrbot_audit_network_health_ingest.php \
     --token <TOKEN>
 EOF
 }
 
-# ----------------------------------------------------------
-# Argument parsing
-# ----------------------------------------------------------
-
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --instance)
-            INSTANCE="${2:-}"
-            shift 2
-            ;;
-        --path)
-            INSTALL_PATH="${2:-}"
-            shift 2
-            ;;
-        --legacy)
-            MODE="legacy"
-            shift
-            ;;
-        --push-url)
-            PUSH_URL="${2:-}"
-            shift 2
-            ;;
-        --token)
-            TOKEN="${2:-}"
-            shift 2
-            ;;
-        --output)
-            OUTPUT_FILE="${2:-}"
-            OUTPUT_FILE_USER_SET="true"
-            shift 2
-            ;;
-        --keep-local)
-            KEEP_LOCAL="true"
-            shift
-            ;;
-        --print-json)
-            PRINT_JSON="true"
-            shift
-            ;;
-        --print-summary)
-            PRINT_SUMMARY="true"
-            shift
-            ;;
-        --test-url)
-            TEST_URL="${2:-}"
-            shift 2
-            ;;
-        --gateway)
-            GATEWAY_OVERRIDE="${2:-}"
-            shift 2
-            ;;
-        --wifi-iface)
-            WIFI_INTERFACE="${2:-}"
-            shift 2
-            ;;
-        --eth-iface)
-            ETH_INTERFACE="${2:-}"
-            shift 2
-            ;;
-        -h|--help)
-            usage
-            exit 0
-            ;;
-        *)
-            die "Unbekannter Parameter: $1"
-            ;;
+        --instance) INSTANCE="${2:-}"; shift 2 ;;
+        --path) INSTALL_PATH="${2:-}"; shift 2 ;;
+        --legacy) MODE="legacy"; shift ;;
+        --push-url) PUSH_URL="${2:-}"; shift 2 ;;
+        --token) TOKEN="${2:-}"; shift 2 ;;
+        --output) OUTPUT_FILE="${2:-}"; OUTPUT_FILE_USER_SET="true"; shift 2 ;;
+        --keep-local) KEEP_LOCAL="true"; shift ;;
+        --print-json) PRINT_JSON="true"; shift ;;
+        --print-summary) PRINT_SUMMARY="true"; shift ;;
+        --test-url) TEST_URL="${2:-}"; shift 2 ;;
+        --gateway) GATEWAY_OVERRIDE="${2:-}"; shift 2 ;;
+        --wifi-iface) WIFI_INTERFACE="${2:-}"; shift 2 ;;
+        --eth-iface) ETH_INTERFACE="${2:-}"; shift 2 ;;
+        -h|--help) usage; exit 0 ;;
+        *) die "Unbekannter Parameter: $1" ;;
     esac
 done
 
-if [[ -z "$INSTANCE" ]]; then
-    usage
-    die "Parameter fehlt: --instance"
-fi
-
-if [[ -z "$INSTALL_PATH" ]]; then
-    usage
-    die "Parameter fehlt: --path"
-fi
+[[ -n "$INSTANCE" ]] || { usage; die "Parameter fehlt: --instance"; }
+[[ -n "$INSTALL_PATH" ]] || { usage; die "Parameter fehlt: --path"; }
 
 if [[ "$INSTALL_PATH" == "~/"* ]]; then
     INSTALL_PATH="${HOME}/${INSTALL_PATH#~/}"
@@ -258,16 +195,10 @@ fi
 
 if [[ -z "$OUTPUT_FILE" ]]; then
     TS_FILE="$(date -u +"%Y%m%d_%H%M%S")"
-    OUTPUT_FILE="/tmp/jrbot-network-health-${INSTANCE_LOWER}-${TS_FILE}.json"
+    OUTPUT_FILE="/tmp/audit_jr-bot-network-health-${INSTANCE_LOWER}-${TS_FILE}.json"
 fi
 
-if ! command -v python3 >/dev/null 2>&1; then
-    die "python3 wird benötigt."
-fi
-
-# ----------------------------------------------------------
-# Export values for Python collector
-# ----------------------------------------------------------
+command -v python3 >/dev/null 2>&1 || die "python3 wird benötigt."
 
 export JR_NET_AUDIT_SCRIPT_VERSION="$SCRIPT_VERSION"
 export JR_NET_AUDIT_SCHEMA_VERSION="$SCHEMA_VERSION"
@@ -281,10 +212,6 @@ export JR_NET_AUDIT_TEST_URL="$TEST_URL"
 export JR_NET_AUDIT_GATEWAY_OVERRIDE="$GATEWAY_OVERRIDE"
 export JR_NET_AUDIT_MAX_FILE_BYTES="$MAX_FILE_BYTES"
 export JR_NET_AUDIT_MAX_JOURNAL_LINES="$MAX_JOURNAL_LINES"
-
-# ----------------------------------------------------------
-# Generate JSON via Python
-# ----------------------------------------------------------
 
 python3 > "$OUTPUT_FILE" <<'PY'
 from __future__ import annotations
@@ -317,7 +244,6 @@ TEST_URL = env("JR_NET_AUDIT_TEST_URL")
 GATEWAY_OVERRIDE = env("JR_NET_AUDIT_GATEWAY_OVERRIDE")
 MAX_FILE_BYTES = int(env("JR_NET_AUDIT_MAX_FILE_BYTES", "12000"))
 MAX_JOURNAL_LINES = int(env("JR_NET_AUDIT_MAX_JOURNAL_LINES", "120"))
-
 
 SENSITIVE_PATTERNS = [
     re.compile(r'(?i)(psk\s*=\s*)".*?"'),
@@ -372,11 +298,12 @@ def run_command(args: list[str], timeout: int = 20) -> dict[str, Any]:
             "stderr": "command not found",
         }
     except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout if isinstance(exc.stdout, str) else ""
         return {
             "cmd": args,
             "available": True,
             "returncode": 124,
-            "stdout": redact_text((exc.stdout or "").strip() if isinstance(exc.stdout, str) else ""),
+            "stdout": redact_text(stdout.strip()),
             "stderr": f"timeout after {timeout}s",
         }
     except Exception as exc:
@@ -933,7 +860,6 @@ def build_findings(data: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dic
     if dns_google and dns_google.get("returncode") not in (0, None):
         add("warning", "DNS_RESOLUTION_FAILED", "DNS-Auflösung für google.com fehlgeschlagen.", dns_google.get("stderr") or dns_google.get("stdout"))
 
-    # Config sanity checks
     config_files = data["network_config_files"]["files"]
     wlan_network_files = [
         f for f in config_files
@@ -948,7 +874,6 @@ def build_findings(data: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dic
             add("warning", "WLAN_NETWORKD_NO_DHCP_YES", f".network Datei für {WIFI_IFACE} enthält kein DHCP=yes.", wlan_network_files)
             rec("warning", "ENABLE_DHCP_FOR_WLAN", f"DHCP für {WIFI_IFACE} aktivieren.", f"/etc/systemd/network/*{WIFI_IFACE}*.network prüfen.")
 
-    # Overall health
     critical_count = len([f for f in findings if f["level"] == "critical"])
     warning_count = len([f for f in findings if f["level"] == "warning"])
 
@@ -957,10 +882,6 @@ def build_findings(data: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dic
 
     return findings, recommendations
 
-
-# ----------------------------------------------------------
-# Main collection
-# ----------------------------------------------------------
 
 services_to_check = [
     "systemd-networkd.service",
@@ -1056,7 +977,7 @@ data["analysis"] = {
     "findings": findings,
     "recommendations": recommendations,
     "comparison_hints": [
-        "Vergleiche network_services.systemd-networkd.service zwischen funktionierendem DMR und defektem GGB.",
+        "Vergleiche network_services.systemd-networkd.service zwischen funktionierendem und fehlerhaftem Bot.",
         "Vergleiche network.ipv4_addresses und network.default_route.",
         "Vergleiche systemd_integrity.missing_libraries_detected.",
         "Vergleiche network_config_files für /etc/systemd/network/*.network.",
@@ -1067,10 +988,6 @@ data["analysis"] = {
 
 print(json.dumps(data, indent=2, ensure_ascii=False))
 PY
-
-# ----------------------------------------------------------
-# Validate generated JSON
-# ----------------------------------------------------------
 
 if ! python3 -m json.tool "$OUTPUT_FILE" >/dev/null 2>&1; then
     die "Die erzeugte JSON-Datei ist ungültig: $OUTPUT_FILE"
@@ -1119,10 +1036,6 @@ print("")
 PY
 fi
 
-# ----------------------------------------------------------
-# Optional OPSCON upload
-# ----------------------------------------------------------
-
 UPLOAD_SUCCESS="false"
 
 if [[ -n "$PUSH_URL" ]]; then
@@ -1141,19 +1054,11 @@ if [[ -n "$PUSH_URL" ]]; then
         die "Kein OPSCON Audit-Token vorhanden. Upload abgebrochen."
     fi
 
-    RESPONSE_FILE="$(mktemp /tmp/jrbot-network-health-upload-response.XXXXXX.txt)"
+    RESPONSE_FILE="$(mktemp /tmp/audit_jr-bot-network-health-upload-response.XXXXXX.txt)"
 
     info "Sende Network-Health-Audit JSON an OPSCON als Datei-Upload..."
 
-    HTTP_CODE="$(curl -fsSL \
-        -w "%{http_code}" \
-        -o "$RESPONSE_FILE" \
-        -X POST \
-        -F "token=${TOKEN}" \
-        -F "instance=${INSTANCE_LOWER}" \
-        -F "mode=${MODE}" \
-        -F "audit_file=@${OUTPUT_FILE};type=application/json" \
-        "$PUSH_URL" || true)"
+    HTTP_CODE="$(curl -fsSL         -w "%{http_code}"         -o "$RESPONSE_FILE"         -X POST         -F "token=${TOKEN}"         -F "instance=${INSTANCE_LOWER}"         -F "mode=${MODE}"         -F "audit_file=@${OUTPUT_FILE};type=application/json"         "$PUSH_URL" || true)"
 
     if [[ "$HTTP_CODE" != "200" ]]; then
         error "Upload fehlgeschlagen. HTTP-Code: ${HTTP_CODE}"
@@ -1176,10 +1081,6 @@ if [[ -n "$PUSH_URL" ]]; then
 
     rm -f "$RESPONSE_FILE"
 fi
-
-# ----------------------------------------------------------
-# Local file cleanup
-# ----------------------------------------------------------
 
 if [[ "$UPLOAD_SUCCESS" == "true" ]]; then
     if [[ "$KEEP_LOCAL" == "true" ]]; then
