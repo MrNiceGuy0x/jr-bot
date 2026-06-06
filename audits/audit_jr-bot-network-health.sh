@@ -11,7 +11,7 @@ set -euo pipefail
 #   Raspberry Pi nodes.
 #
 #   This script is intentionally deeper than:
-#   tools/audit_jr-bot-structure.sh
+#   audits/audit_jr-bot-structure.sh
 #
 # It collects:
 #   - Host / OS / Raspberry Pi information
@@ -58,40 +58,39 @@ set -euo pipefail
 #   - wpa_supplicant configs are sanitized before output.
 #
 # Local file behavior:
-#   - Default output is a temporary JSON file under /tmp.
-#   - If upload succeeds and no --keep-local was set, the temp file is deleted.
+#   - Default output is written to <bot-path>/reports/pending/.
+#   - If reports/pending cannot be created, /tmp is used as fallback.
+#   - If upload succeeds and no --keep-local was set, the generated file is deleted.
 #   - If --output <file> is set, the file is kept.
 #   - If --keep-local is set, the file is kept.
-#   - If upload fails, the file is kept for debugging.
+#   - If upload fails, the file is kept for retry/debugging.
 #
 # OPSCON endpoint:
 #   https://opscon.blenk.co.at/api/jrbot_audit_network_health_ingest.php
 #
 # OPSCON storage model:
 #   /OPSCON/data/audit_jr-bot-network-health/<instance>/
-#   ├── audit_jr-bot-network-health-<instance>.json
-#   └── history/
-#       └── audit_jr-bot-network-health-<instance>-YYYYMMDD_HHMMSS.json
+#   â”œâ”€â”€ audit_jr-bot-network-health-<instance>.json
+#   â””â”€â”€ history/
+#       â””â”€â”€ audit_jr-bot-network-health-<instance>-YYYYMMDD_HHMMSS.json
 #
 # Example local debug:
-#   ./audit_jr-bot-network-health.sh \
-#     --instance ggb \
-#     --path ~/bots/ggb \
-#     --legacy \
-#     --output ~/audit_jr-bot-network-health-ggb-local-debug.json \
+#   ./audits/audit_jr-bot-network-health.sh \
+#     --instance trx \
+#     --path /opt/bots/trx \
+#     --output /opt/bots/trx/reports/pending/audit_jr-bot-network-health-trx-local-debug.json \
 #     --print-summary
 #
 # Example OPSCON upload:
-#   ./audit_jr-bot-network-health.sh \
-#     --instance ggb \
-#     --path ~/bots/ggb \
-#     --legacy \
+#   ./audits/audit_jr-bot-network-health.sh \
+#     --instance trx \
+#     --path /opt/bots/trx \
 #     --push-url https://opscon.blenk.co.at/api/jrbot_audit_network_health_ingest.php \
 #     --token <TOKEN>
 #
 # ==========================================================
 
-SCRIPT_VERSION="0.1.1"
+SCRIPT_VERSION="0.2.0"
 SCHEMA_VERSION="jrbot-network-health-audit-v1"
 
 INSTANCE=""
@@ -125,7 +124,7 @@ Usage:
 
 Required:
   --instance <name>       Bot instance name, e.g. trx, dmr, ggb
-  --path <bot-path>       Bot install path, e.g. /opt/bots/trx or ~/bots/ggb
+  --path <bot-path>       Bot install path, e.g. /opt/bots/trx
 
 Options:
   --legacy                Legacy mode for older DMR/GGB structures
@@ -136,25 +135,23 @@ Options:
   --print-json            Print full JSON to stdout
   --print-summary         Print compact findings/recommendations summary
   --test-url <url>        Optional HTTPS URL to test, e.g. https://spl.blenk.co.at
-  --gateway <ip>          Optional gateway override, e.g. 192.168.178.1
+  --gateway <ip>          Optional gateway override, e.g. <gateway-ip>
   --wifi-iface <iface>    Wi-Fi interface, default: wlan0
   --eth-iface <iface>     Ethernet interface, default: eth0
   -h, --help              Show this help
 
 Examples:
-  ./audit_jr-bot-network-health.sh --instance ggb --path ~/bots/ggb --legacy --print-summary
+  ./audits/audit_jr-bot-network-health.sh --instance trx --path /opt/bots/trx --print-summary
 
-  ./audit_jr-bot-network-health.sh \
-    --instance ggb \
-    --path ~/bots/ggb \
-    --legacy \
-    --output ~/audit_jr-bot-network-health-ggb-local-debug.json \
+  ./audits/audit_jr-bot-network-health.sh \
+    --instance trx \
+    --path /opt/bots/trx \
+    --output /opt/bots/trx/reports/pending/audit_jr-bot-network-health-trx-local-debug.json \
     --print-summary
 
-  ./audit_jr-bot-network-health.sh \
-    --instance dmr \
-    --path ~/bots/DMR \
-    --legacy \
+  ./audits/audit_jr-bot-network-health.sh \
+    --instance trx \
+    --path /opt/bots/trx \
     --push-url https://opscon.blenk.co.at/api/jrbot_audit_network_health_ingest.php \
     --token <TOKEN>
 EOF
@@ -187,18 +184,26 @@ if [[ "$INSTALL_PATH" == "~/"* ]]; then
     INSTALL_PATH="${HOME}/${INSTALL_PATH#~/}"
 fi
 
+REPORTS_PENDING_DIR="${INSTALL_PATH}/reports/pending"
+
 INSTANCE_LOWER="$(echo "$INSTANCE" | tr '[:upper:]' '[:lower:]')"
 
 if ! [[ "$INSTANCE_LOWER" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
-    die "Ungültiger Instanzname: $INSTANCE"
+    die "UngÃ¼ltiger Instanzname: $INSTANCE"
 fi
 
 if [[ -z "$OUTPUT_FILE" ]]; then
     TS_FILE="$(date -u +"%Y%m%d_%H%M%S")"
-    OUTPUT_FILE="/tmp/audit_jr-bot-network-health-${INSTANCE_LOWER}-${TS_FILE}.json"
+
+    if mkdir -p "$REPORTS_PENDING_DIR" 2>/dev/null; then
+        OUTPUT_FILE="${REPORTS_PENDING_DIR}/audit_jr-bot-network-health-${INSTANCE_LOWER}-${TS_FILE}.json"
+    else
+        warn "reports/pending konnte nicht erstellt werden. Fallback auf /tmp."
+        OUTPUT_FILE="/tmp/audit_jr-bot-network-health-${INSTANCE_LOWER}-${TS_FILE}.json"
+    fi
 fi
 
-command -v python3 >/dev/null 2>&1 || die "python3 wird benötigt."
+command -v python3 >/dev/null 2>&1 || die "python3 wird benÃ¶tigt."
 
 export JR_NET_AUDIT_SCRIPT_VERSION="$SCRIPT_VERSION"
 export JR_NET_AUDIT_SCHEMA_VERSION="$SCHEMA_VERSION"
@@ -206,6 +211,7 @@ export JR_NET_AUDIT_INSTANCE="$INSTANCE_LOWER"
 export JR_NET_AUDIT_MODE="$MODE"
 export JR_NET_AUDIT_CREATED_AT_UTC="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 export JR_NET_AUDIT_INSTALL_PATH="$INSTALL_PATH"
+export JR_NET_AUDIT_REPORTS_PENDING_DIR="$REPORTS_PENDING_DIR"
 export JR_NET_AUDIT_WIFI_INTERFACE="$WIFI_INTERFACE"
 export JR_NET_AUDIT_ETH_INTERFACE="$ETH_INTERFACE"
 export JR_NET_AUDIT_TEST_URL="$TEST_URL"
@@ -238,6 +244,7 @@ INSTANCE = env("JR_NET_AUDIT_INSTANCE")
 MODE = env("JR_NET_AUDIT_MODE")
 CREATED_AT_UTC = env("JR_NET_AUDIT_CREATED_AT_UTC")
 INSTALL_PATH = env("JR_NET_AUDIT_INSTALL_PATH")
+REPORTS_PENDING_DIR = env("JR_NET_AUDIT_REPORTS_PENDING_DIR")
 WIFI_IFACE = env("JR_NET_AUDIT_WIFI_INTERFACE", "wlan0")
 ETH_IFACE = env("JR_NET_AUDIT_ETH_INTERFACE", "eth0")
 TEST_URL = env("JR_NET_AUDIT_TEST_URL")
@@ -808,11 +815,11 @@ def build_findings(data: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dic
 
     if not ipv4s:
         add("critical", "NO_IPV4", "Keine IPv4-Adresse auf einem globalen Interface gefunden.", data["network"]["ip_addr_json"])
-        rec("critical", "RESTORE_DHCP_IPV4", "DHCP/IPv4-Zuweisung prüfen.", "Network service reparieren oder temporär IPv4 manuell setzen.")
+        rec("critical", "RESTORE_DHCP_IPV4", "DHCP/IPv4-Zuweisung prÃ¼fen.", "Network service reparieren oder temporÃ¤r IPv4 manuell setzen.")
 
     if not default_route.get("present"):
         add("critical", "NO_DEFAULT_ROUTE", "Keine Default Route vorhanden.", data["network"]["ip_route"])
-        rec("critical", "RESTORE_DEFAULT_ROUTE", "Default Route prüfen.", "Gateway per DHCP oder temporär mit ip route replace setzen.")
+        rec("critical", "RESTORE_DEFAULT_ROUTE", "Default Route prÃ¼fen.", "Gateway per DHCP oder temporÃ¤r mit ip route replace setzen.")
 
     sn = services.get("systemd-networkd.service", {})
     if sn.get("exists") and sn.get("active_state") == "failed":
@@ -827,7 +834,7 @@ def build_findings(data: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dic
                 "exec_main_status": sn.get("exec_main_status"),
             }
         )
-        rec("critical", "REPAIR_SYSTEMD_NETWORKD", "systemd-networkd reparieren.", "journalctl prüfen, systemd/libsystemd0 reinstallieren.")
+        rec("critical", "REPAIR_SYSTEMD_NETWORKD", "systemd-networkd reparieren.", "journalctl prÃ¼fen, systemd/libsystemd0 reinstallieren.")
 
     nm = services.get("NetworkManager.service", {})
     dhcpcd = services.get("dhcpcd.service", {})
@@ -840,7 +847,7 @@ def build_findings(data: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dic
         add("info", "DHCPCD_NOT_FOUND", "dhcpcd.service ist nicht vorhanden.", None)
 
     if wpa.get("exists") and wpa.get("active_state") == "active":
-        add("ok", "WPA_SUPPLICANT_ACTIVE", "wpa_supplicant läuft.", None)
+        add("ok", "WPA_SUPPLICANT_ACTIVE", "wpa_supplicant lÃ¤uft.", None)
 
     missing_libs = integrity.get("missing_libraries_detected", [])
     if missing_libs:
@@ -848,8 +855,8 @@ def build_findings(data: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dic
         rec(
             "critical",
             "REPAIR_SYSTEMD_LIBRARIES",
-            "Systemd-Library-Auflösung reparieren.",
-            "systemd/libsystemd0 reinstallieren; vorhandene Library-Kandidaten prüfen; Symlink nur als temporären Fix verwenden."
+            "Systemd-Library-AuflÃ¶sung reparieren.",
+            "systemd/libsystemd0 reinstallieren; vorhandene Library-Kandidaten prÃ¼fen; Symlink nur als temporÃ¤ren Fix verwenden."
         )
 
     gateway_ping = connectivity.get("gateway_ping", {})
@@ -858,7 +865,7 @@ def build_findings(data: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dic
 
     dns_google = connectivity.get("dns_getent_google", {})
     if dns_google and dns_google.get("returncode") not in (0, None):
-        add("warning", "DNS_RESOLUTION_FAILED", "DNS-Auflösung für google.com fehlgeschlagen.", dns_google.get("stderr") or dns_google.get("stdout"))
+        add("warning", "DNS_RESOLUTION_FAILED", "DNS-AuflÃ¶sung fÃ¼r google.com fehlgeschlagen.", dns_google.get("stderr") or dns_google.get("stdout"))
 
     config_files = data["network_config_files"]["files"]
     wlan_network_files = [
@@ -867,12 +874,12 @@ def build_findings(data: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dic
     ]
 
     if not wlan_network_files:
-        add("warning", "NO_WLAN_NETWORKD_CONFIG_DETECTED", f"Keine systemd-networkd .network Datei für {WIFI_IFACE} erkannt.", None)
+        add("warning", "NO_WLAN_NETWORKD_CONFIG_DETECTED", f"Keine systemd-networkd .network Datei fÃ¼r {WIFI_IFACE} erkannt.", None)
     else:
         has_dhcp_yes = any("DHCP=yes" in f.get("content_redacted", "") for f in wlan_network_files)
         if not has_dhcp_yes:
-            add("warning", "WLAN_NETWORKD_NO_DHCP_YES", f".network Datei für {WIFI_IFACE} enthält kein DHCP=yes.", wlan_network_files)
-            rec("warning", "ENABLE_DHCP_FOR_WLAN", f"DHCP für {WIFI_IFACE} aktivieren.", f"/etc/systemd/network/*{WIFI_IFACE}*.network prüfen.")
+            add("warning", "WLAN_NETWORKD_NO_DHCP_YES", f".network Datei fÃ¼r {WIFI_IFACE} enthÃ¤lt kein DHCP=yes.", wlan_network_files)
+            rec("warning", "ENABLE_DHCP_FOR_WLAN", f"DHCP fÃ¼r {WIFI_IFACE} aktivieren.", f"/etc/systemd/network/*{WIFI_IFACE}*.network prÃ¼fen.")
 
     critical_count = len([f for f in findings if f["level"] == "critical"])
     warning_count = len([f for f in findings if f["level"] == "warning"])
@@ -922,6 +929,8 @@ data: dict[str, Any] = {
     "bot_context": {
         "install_path": INSTALL_PATH,
         "install_path_exists": Path(INSTALL_PATH).exists(),
+        "reports_pending_dir": REPORTS_PENDING_DIR,
+        "reports_pending_dir_exists": Path(REPORTS_PENDING_DIR).exists(),
         "mode": MODE,
     },
     "commands_available": {
@@ -980,7 +989,7 @@ data["analysis"] = {
         "Vergleiche network_services.systemd-networkd.service zwischen funktionierendem und fehlerhaftem Bot.",
         "Vergleiche network.ipv4_addresses und network.default_route.",
         "Vergleiche systemd_integrity.missing_libraries_detected.",
-        "Vergleiche network_config_files für /etc/systemd/network/*.network.",
+        "Vergleiche network_config_files fÃ¼r /etc/systemd/network/*.network.",
         "Vergleiche package_versions.systemd und package_versions.libsystemd0.",
         "Vergleiche wifi.iw_link und connectivity.gateway_ping."
     ]
@@ -990,7 +999,7 @@ print(json.dumps(data, indent=2, ensure_ascii=False))
 PY
 
 if ! python3 -m json.tool "$OUTPUT_FILE" >/dev/null 2>&1; then
-    die "Die erzeugte JSON-Datei ist ungültig: $OUTPUT_FILE"
+    die "Die erzeugte JSON-Datei ist ungÃ¼ltig: $OUTPUT_FILE"
 fi
 
 info "Network-Health-Audit JSON erstellt: ${OUTPUT_FILE}"
@@ -1040,7 +1049,7 @@ UPLOAD_SUCCESS="false"
 
 if [[ -n "$PUSH_URL" ]]; then
     if ! command -v curl >/dev/null 2>&1; then
-        die "curl wird für den Upload benötigt."
+        die "curl wird fÃ¼r den Upload benÃ¶tigt."
     fi
 
     if [[ -z "$TOKEN" ]]; then
@@ -1067,7 +1076,7 @@ if [[ -n "$PUSH_URL" ]]; then
             echo >&2
         fi
         rm -f "$RESPONSE_FILE"
-        warn "Lokale Network-Health-Audit-Datei bleibt für Debugging erhalten: ${OUTPUT_FILE}"
+        warn "Lokale Network-Health-Audit-Datei bleibt fÃ¼r Debugging erhalten: ${OUTPUT_FILE}"
         exit 1
     fi
 
@@ -1089,7 +1098,7 @@ if [[ "$UPLOAD_SUCCESS" == "true" ]]; then
         info "Lokale Network-Health-Audit-Datei bleibt erhalten wegen --output: ${OUTPUT_FILE}"
     else
         rm -f "$OUTPUT_FILE"
-        info "Lokale temporäre Network-Health-Audit-Datei wurde nach erfolgreichem Upload gelöscht."
+        info "Lokale temporÃ¤re Network-Health-Audit-Datei wurde nach erfolgreichem Upload gelÃ¶scht."
     fi
 else
     info "Network health audit completed: ${OUTPUT_FILE}"
