@@ -129,4 +129,3 @@ shutdown.sh
 Die Kategorisierung erfolgt ausschließlich über `tbl_jobs.job_group = maintenance`.
 
 Es werden keine Unterordner wie `scripts/system/`, `scripts/power/` oder `scripts/maintenance/` verwendet.
-

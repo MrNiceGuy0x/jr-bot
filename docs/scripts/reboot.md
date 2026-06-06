@@ -210,4 +210,3 @@ tbl_jobs.job_group = maintenance
 Es werden keine Unterordner wie `scripts/power/`, `scripts/system/` oder `07_scripts/power/` verwendet.
 
 `cancel_reboot.sh` existiert im One-Liner-Standard nicht. `cancel_shutdown.sh` übernimmt den Abbruch für geplante Reboots und Shutdowns.
-

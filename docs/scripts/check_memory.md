@@ -120,4 +120,3 @@ tbl_jobs.job_group = diagnostics
 ```
 
 Es werden keine Unterordner wie `scripts/diagnostics/` oder `07_scripts/diagnostics/` verwendet.
-
