@@ -2,20 +2,18 @@
 # =========================================================
 # JR-Bot Script Header
 # =========================================================
-# Script: scripts/check_memory.sh
+# Script: scripts/check_disk.sh
 # Project: JR-Bot / OPSCON
-# Purpose: Zeigt RAM- und Swap-Auslastung des Raspberry Pi.
-# Job-Key: check_memory
+# Purpose: Zeigt Speicherplatzbelegung der wichtigsten Dateisysteme.
+# Job-Key: check_disk
 # Category: DIAGNOSTICS / LOW
 # Dependencies:
 #   - date command
-#   - free command
-#   - ps command
-#   - head command
+#   - df command
 # Security:
 #   - Kein sudo erforderlich
 # Notes:
-#   - Runtime path: $INSTALL_DIR/scripts/check_memory.sh
+#   - Runtime path: $INSTALL_DIR/scripts/check_disk.sh
 #   - Logical grouping: tbl_jobs.job_group = diagnostics
 #   - Keine scripts-Unterordner verwenden
 #   - Reines Diagnose-Skript
@@ -23,16 +21,16 @@
 
 set -u
 
-SCRIPT_NAME="check_memory.sh"
+SCRIPT_NAME="check_disk.sh"
 
 echo "Skript: $SCRIPT_NAME wurde gestartet."
 echo "Zeitpunkt:"
 date '+%Y-%m-%d %H:%M:%S %Z'
 echo
 
-echo "RAM- und Swap-Auslastung:"
-free -h
+echo "Wichtige Dateisysteme:"
+df -hT / /home 2>/dev/null
 echo
 
-echo "Top Memory Prozesse:"
-ps -eo pid,pmem,comm --sort=-pmem | head -n 6
+echo "Vollständige Speicherübersicht:"
+df -h
