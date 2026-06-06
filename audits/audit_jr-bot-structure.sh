@@ -14,7 +14,7 @@ set -euo pipefail
 #   - Network information, local IP, gateway, SSH status
 #   - Storage information, SD/root filesystem, bot filesystem, block devices
 #   - Bot directory structure
-#   - Runtime structure including scripts/maintenance/reports/docs
+#   - Runtime structure including scripts/audits/reports/docs
 #   - Legacy vs template profile detection
 #   - Structure deviations from the current One-Liner target layout
 #   - File existence, permissions, owner/group
@@ -194,7 +194,7 @@ fi
 INSTANCE_LOWER="$(echo "$INSTANCE" | tr '[:upper:]' '[:lower:]')"
 
 if ! [[ "$INSTANCE_LOWER" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
-    die "Ungültiger Instanzname: $INSTANCE"
+    die "UngÃƒÂ¼ltiger Instanzname: $INSTANCE"
 fi
 
 if ! [[ "$TREE_MAX_DEPTH" =~ ^[0-9]+$ ]]; then
@@ -209,7 +209,7 @@ if [[ -z "$OUTPUT_FILE" ]]; then
 fi
 
 if ! command -v python3 >/dev/null 2>&1; then
-    die "python3 wird benötigt, um die Audit-JSON sicher zu erzeugen."
+    die "python3 wird benÃƒÂ¶tigt, um die Audit-JSON sicher zu erzeugen."
 fi
 
 # ----------------------------------------------------------
@@ -887,49 +887,115 @@ def tree_snapshot(base: Path, max_depth: int, max_items: int) -> dict[str, Any]:
 
 def collect_runtime_structure(systemd_data: dict[str, Any]) -> dict[str, Any]:
     scripts_dir = INSTALL_PATH / "scripts"
-    maintenance_dir = INSTALL_PATH / "maintenance"
+    audits_dir = INSTALL_PATH / "audits"
     reports_dir = INSTALL_PATH / "reports"
+    reports_pending_dir = reports_dir / "pending"
     docs_dir = INSTALL_PATH / "docs"
-    tools_dir = INSTALL_PATH / "tools"
+    docs_scripts_dir = docs_dir / "scripts"
+    docs_audits_dir = docs_dir / "audits"
+
+    legacy_maintenance_dir = INSTALL_PATH / "maintenance"
+    legacy_tools_dir = INSTALL_PATH / "tools"
 
     known_dirs = {
         "scripts_dir": file_meta(scripts_dir),
-        "scripts_system_dir": file_meta(scripts_dir / "system"),
-        "scripts_checks_dir": file_meta(scripts_dir / "checks"),
-        "scripts_maintenance_dir": file_meta(scripts_dir / "maintenance"),
-        "scripts_docs_dir": file_meta(scripts_dir / "docs"),
-        "maintenance_dir": file_meta(maintenance_dir),
+        "audits_dir": file_meta(audits_dir),
         "reports_dir": file_meta(reports_dir),
+        "reports_pending_dir": file_meta(reports_pending_dir),
         "docs_dir": file_meta(docs_dir),
-        "tools_dir": file_meta(tools_dir),
+        "docs_scripts_dir": file_meta(docs_scripts_dir),
+        "docs_audits_dir": file_meta(docs_audits_dir),
+
+        "legacy_tools_dir": file_meta(legacy_tools_dir),
+        "legacy_maintenance_dir": file_meta(legacy_maintenance_dir),
+        "legacy_scripts_system_dir": file_meta(scripts_dir / "system"),
+        "legacy_scripts_checks_dir": file_meta(scripts_dir / "checks"),
+        "legacy_scripts_maintenance_dir": file_meta(scripts_dir / "maintenance"),
+        "legacy_scripts_docs_dir": file_meta(scripts_dir / "docs"),
     }
 
-    boot_report_candidates = [
-        maintenance_dir / "jrbot_boot_report.sh",
+    standard_script_names = [
+        "cancel_shutdown.sh",
+        "check_disk.sh",
+        "check_memory.sh",
+        "reboot.sh",
+        "shutdown.sh",
+        "ssh_start.sh",
+        "ssh_status.sh",
+        "ssh_stop.sh",
+        "tail_runner_log.sh",
+        "uptime_info.sh",
+    ]
+
+    standard_scripts_flat = {
+        name: file_meta(scripts_dir / name)
+        for name in standard_script_names
+    }
+
+    boot_report_primary = audits_dir / "audit_jr-bot-boot-report.sh"
+
+    boot_report_legacy_candidates = [
+        legacy_maintenance_dir / "jrbot_boot_report.sh",
         scripts_dir / "maintenance" / "jrbot_boot_report.sh",
         scripts_dir / "system" / "jrbot_boot_report.sh",
         INSTALL_PATH / "jrbot_boot_report.sh",
     ]
 
-    audit_structure_candidates = [
-        tools_dir / "audit_jr-bot-structure.sh",
+    boot_report_candidates = [
+        boot_report_primary,
+        *boot_report_legacy_candidates,
+    ]
+
+    audit_structure_primary = audits_dir / "audit_jr-bot-structure.sh"
+    audit_structure_legacy_candidates = [
+        legacy_tools_dir / "audit_jr-bot-structure.sh",
         INSTALL_PATH / "audit_jr-bot-structure.sh",
         Path.home() / "audit_jr-bot-structure.sh",
     ]
 
-    audit_network_health_candidates = [
-        tools_dir / "audit_jr-bot-network-health.sh",
+    audit_network_health_primary = audits_dir / "audit_jr-bot-network-health.sh"
+    audit_network_health_legacy_candidates = [
+        legacy_tools_dir / "audit_jr-bot-network-health.sh",
         INSTALL_PATH / "audit_jr-bot-network-health.sh",
         Path.home() / "audit_jr-bot-network-health.sh",
     ]
 
+    audit_boot_report_candidates = [
+        audits_dir / "audit_jr-bot-boot-report.sh",
+        legacy_maintenance_dir / "jrbot_boot_report.sh",
+        scripts_dir / "maintenance" / "jrbot_boot_report.sh",
+        scripts_dir / "system" / "jrbot_boot_report.sh",
+        INSTALL_PATH / "jrbot_boot_report.sh",
+    ]
+
+    sudoers_file = Path("/etc/sudoers.d") / INSTANCE
+
     known_scripts = {
+        "standard_scripts_flat": standard_scripts_flat,
+
         "scripts_reboot": file_meta(scripts_dir / "reboot.sh"),
-        "maintenance_reboot": file_meta(maintenance_dir / "reboot.sh"),
+        "maintenance_reboot": file_meta(legacy_maintenance_dir / "reboot.sh"),
         "scripts_maintenance_reboot": file_meta(scripts_dir / "maintenance" / "reboot.sh"),
+
+        "boot_report_primary": file_meta(boot_report_primary),
+        "boot_report_legacy_candidates": [file_meta(path) for path in boot_report_legacy_candidates],
         "boot_report_candidates": [file_meta(path) for path in boot_report_candidates],
-        "audit_structure_candidates": [file_meta(path) for path in audit_structure_candidates],
-        "audit_network_health_candidates": [file_meta(path) for path in audit_network_health_candidates],
+
+        "audit_structure_primary": file_meta(audit_structure_primary),
+        "audit_structure_legacy_candidates": [file_meta(path) for path in audit_structure_legacy_candidates],
+        "audit_structure_candidates": [
+            file_meta(audit_structure_primary),
+            *[file_meta(path) for path in audit_structure_legacy_candidates],
+        ],
+
+        "audit_network_health_primary": file_meta(audit_network_health_primary),
+        "audit_network_health_legacy_candidates": [file_meta(path) for path in audit_network_health_legacy_candidates],
+        "audit_network_health_candidates": [
+            file_meta(audit_network_health_primary),
+            *[file_meta(path) for path in audit_network_health_legacy_candidates],
+        ],
+
+        "audit_boot_report_candidates": [file_meta(path) for path in audit_boot_report_candidates],
     }
 
     top_level_entries: list[dict[str, Any]] = []
@@ -998,12 +1064,12 @@ def collect_runtime_structure(systemd_data: dict[str, Any]) -> dict[str, Any]:
             str(scripts_dir),
         )
 
-    if not maintenance_dir.exists() and not (scripts_dir / "maintenance").exists():
+    if not audits_dir.exists():
         add_deviation(
             "warning",
-            "MAINTENANCE_DIR_MISSING",
-            "No maintenance directory detected.",
-            str(maintenance_dir),
+            "AUDITS_DIR_MISSING",
+            "audits directory is missing.",
+            str(audits_dir),
         )
 
     if not reports_dir.exists():
@@ -1014,18 +1080,78 @@ def collect_runtime_structure(systemd_data: dict[str, Any]) -> dict[str, Any]:
             str(reports_dir),
         )
 
-    if not (scripts_dir / "reboot.sh").exists() and not (maintenance_dir / "reboot.sh").exists() and not (scripts_dir / "maintenance" / "reboot.sh").exists():
+    if not reports_pending_dir.exists():
         add_deviation(
-            "warning",
-            "REBOOT_SCRIPT_MISSING",
-            "No reboot.sh script detected in scripts or maintenance paths.",
+            "info",
+            "REPORTS_PENDING_DIR_MISSING",
+            "reports/pending directory is missing.",
+            str(reports_pending_dir),
         )
 
-    if not any(path.exists() for path in boot_report_candidates):
+    missing_standard_scripts = [
+        name for name, meta in standard_scripts_flat.items()
+        if not meta["exists"]
+    ]
+
+    if missing_standard_scripts:
         add_deviation(
             "warning",
-            "BOOT_REPORT_SCRIPT_MISSING",
-            "No jrbot_boot_report.sh script detected.",
+            "STANDARD_SCRIPTS_MISSING",
+            "One or more standard flat scripts are missing: " + ", ".join(missing_standard_scripts),
+            str(scripts_dir),
+        )
+
+    legacy_dirs_found = [
+        str(path)
+        for path in [
+            legacy_tools_dir,
+            legacy_maintenance_dir,
+            scripts_dir / "system",
+            scripts_dir / "checks",
+            scripts_dir / "maintenance",
+            scripts_dir / "docs",
+        ]
+        if path.exists()
+    ]
+
+    if legacy_dirs_found:
+        add_deviation(
+            "info",
+            "LEGACY_DIRECTORIES_DETECTED",
+            "Legacy directories detected. They are recorded for migration tracking, not treated as current target layout.",
+            ", ".join(legacy_dirs_found),
+        )
+
+    if not boot_report_primary.exists():
+        add_deviation(
+            "warning",
+            "BOOT_REPORT_AUDIT_SCRIPT_MISSING",
+            "No audit_jr-bot-boot-report.sh script detected in audits/.",
+            str(boot_report_primary),
+        )
+
+    if not audit_structure_primary.exists():
+        add_deviation(
+            "warning",
+            "STRUCTURE_AUDIT_SCRIPT_MISSING",
+            "No audit_jr-bot-structure.sh script detected in audits/.",
+            str(audit_structure_primary),
+        )
+
+    if not audit_network_health_primary.exists():
+        add_deviation(
+            "warning",
+            "NETWORK_HEALTH_AUDIT_SCRIPT_MISSING",
+            "No audit_jr-bot-network-health.sh script detected in audits/.",
+            str(audit_network_health_primary),
+        )
+
+    if not sudoers_file.exists():
+        add_deviation(
+            "info",
+            "SUDOERS_FILE_MISSING",
+            "No /etc/sudoers.d/<instance> file detected. Required for sudo-managed wrapper scripts such as reboot/shutdown/ssh controls.",
+            str(sudoers_file),
         )
 
     if not systemd_data["service_template"]["exists"] and not systemd_data["legacy_service"]["exists"]:
@@ -1044,7 +1170,7 @@ def collect_runtime_structure(systemd_data: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "profile_detected": profile,
-        "expected_layout": "one_liner_v0_3_target",
+        "expected_layout": "one_liner_v0_4_flat_scripts_audits",
         "mode_requested": MODE,
         "top_level_entries": top_level_entries,
         "known_dirs": known_dirs,
@@ -1052,7 +1178,6 @@ def collect_runtime_structure(systemd_data: dict[str, Any]) -> dict[str, Any]:
         "tree_snapshot": tree_snapshot(INSTALL_PATH, TREE_MAX_DEPTH, TREE_MAX_ITEMS),
         "deviations": deviations,
     }
-
 
 config_dir = INSTALL_PATH / "config"
 src_dir = INSTALL_PATH / "src"
@@ -1180,14 +1305,20 @@ data["summary"] = {
         "storage_root_available": data["storage"]["root_filesystem"]["available"],
         "storage_bot_available": data["storage"]["bot_filesystem"]["available"],
         "scripts_dir_exists": (INSTALL_PATH / "scripts").exists(),
-        "maintenance_available": (INSTALL_PATH / "maintenance").exists() or (INSTALL_PATH / "scripts" / "maintenance").exists(),
+        "audits_dir_exists": (INSTALL_PATH / "audits").exists(),
         "reports_dir_exists": (INSTALL_PATH / "reports").exists(),
-        "boot_report_script_detected": any(item["exists"] for item in runtime_structure["known_scripts"]["boot_report_candidates"]),
-        "reboot_script_detected": (
-            runtime_structure["known_scripts"]["scripts_reboot"]["exists"]
-            or runtime_structure["known_scripts"]["maintenance_reboot"]["exists"]
-            or runtime_structure["known_scripts"]["scripts_maintenance_reboot"]["exists"]
+        "reports_pending_dir_exists": (INSTALL_PATH / "reports" / "pending").exists(),
+        "docs_scripts_dir_exists": (INSTALL_PATH / "docs" / "scripts").exists(),
+        "docs_audits_dir_exists": (INSTALL_PATH / "docs" / "audits").exists(),
+        "sudoers_file_exists": (Path("/etc/sudoers.d") / INSTANCE).exists(),
+        "standard_scripts_flat_complete": all(
+            item["exists"]
+            for item in runtime_structure["known_scripts"]["standard_scripts_flat"].values()
         ),
+        "boot_report_audit_script_detected": runtime_structure["known_scripts"]["boot_report_primary"]["exists"],
+        "structure_audit_script_detected": runtime_structure["known_scripts"]["audit_structure_primary"]["exists"],
+        "network_health_audit_script_detected": runtime_structure["known_scripts"]["audit_network_health_primary"]["exists"],
+        "reboot_script_detected": runtime_structure["known_scripts"]["scripts_reboot"]["exists"],
     },
 }
 
@@ -1199,7 +1330,7 @@ PY
 # ----------------------------------------------------------
 
 if ! python3 -m json.tool "$OUTPUT_FILE" >/dev/null 2>&1; then
-    die "Die erzeugte JSON-Datei ist ungültig: $OUTPUT_FILE"
+    die "Die erzeugte JSON-Datei ist ungÃƒÂ¼ltig: $OUTPUT_FILE"
 fi
 
 info "Structure-Audit JSON erstellt: ${OUTPUT_FILE}"
@@ -1216,7 +1347,7 @@ UPLOAD_SUCCESS="false"
 
 if [[ -n "$PUSH_URL" ]]; then
     if ! command -v curl >/dev/null 2>&1; then
-        die "curl wird für den Upload benötigt."
+        die "curl wird fÃƒÂ¼r den Upload benÃƒÂ¶tigt."
     fi
 
     if [[ -z "$TOKEN" ]]; then
@@ -1254,7 +1385,7 @@ if [[ -n "$PUSH_URL" ]]; then
 
         rm -f "$RESPONSE_FILE"
 
-        warn "Lokale Structure-Audit-Datei bleibt für Debugging erhalten: ${OUTPUT_FILE}"
+        warn "Lokale Structure-Audit-Datei bleibt fÃƒÂ¼r Debugging erhalten: ${OUTPUT_FILE}"
         exit 1
     fi
 
@@ -1281,7 +1412,7 @@ if [[ "$UPLOAD_SUCCESS" == "true" ]]; then
         info "Lokale Structure-Audit-Datei bleibt erhalten wegen --output: ${OUTPUT_FILE}"
     else
         rm -f "$OUTPUT_FILE"
-        info "Lokale temporäre Structure-Audit-Datei wurde nach erfolgreichem Upload gelöscht."
+        info "Lokale temporÃƒÂ¤re Structure-Audit-Datei wurde nach erfolgreichem Upload gelÃƒÂ¶scht."
     fi
 else
     info "Structure audit completed: ${OUTPUT_FILE}"
