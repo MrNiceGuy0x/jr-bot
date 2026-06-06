@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# =========================================================
+# JR-Bot Script Header
+# =========================================================
+# Script: scripts/shutdown.sh
+# Project: JR-Bot / OPSCON
+# Purpose: Plant ein kontrolliertes Herunterfahren des Raspberry Pi.
+# Job-Key: manual_shutdown
+# Category: POWER / CRITICAL
+# Dependencies:
+#   - shutdown command: /sbin/shutdown or /usr/sbin/shutdown
+#   - scripts/cancel_shutdown.sh
+# Security:
+#   - sudoers: /etc/sudoers.d/<instance>
+#   - Required: <instance> ALL=(root) NOPASSWD: $INSTALL_DIR/scripts/shutdown.sh
+# Notes:
+#   - Runtime path: $INSTALL_DIR/scripts/shutdown.sh
+#   - Logical grouping: tbl_jobs.job_group = maintenance
+#   - Keine scripts-Unterordner verwenden
+#   - Standard: Shutdown in 3 Minuten
+#   - Abbruch vor Ablauf über cancel_shutdown.sh möglich
+#   - Nach Shutdown ist physischer Zugriff erforderlich
+#   - Nicht als interval-Job verwenden
+# =========================================================
+
+set -u
+
+SCRIPT_NAME="shutdown.sh"
+DEFAULT_DELAY=3
+MIN_DELAY=1
+MAX_DELAY=60
+
+find_shutdown_bin() {
+    if [ -x "/sbin/shutdown" ]; then
+        echo "/sbin/shutdown"
+        return 0
+    fi
+
+    if [ -x "/usr/sbin/shutdown" ]; then
+        echo "/usr/sbin/shutdown"
+        return 0
+    fi
+
+    command -v shutdown 2>/dev/null || return 1
+}
+
+if [ "$(id -u)" -ne 0 ]; then
+    echo "Fehler: Dieses Skript muss über sudo ausgeführt werden."
+    echo "Erwarteter Aufruf: sudo \$INSTALL_DIR/scripts/${SCRIPT_NAME} [delay_minutes]"
+    exit 1
+fi
+
+DELAY="${1:-$DEFAULT_DELAY}"
+
+if ! [[ "$DELAY" =~ ^[0-9]+$ ]]; then
+    echo "Fehler: DELAY muss eine Zahl in Minuten sein."
+    exit 1
+fi
+
+if [ "$DELAY" -lt "$MIN_DELAY" ]; then
+    echo "Fehler: DELAY muss mindestens $MIN_DELAY Minute betragen."
+    exit 1
+fi
+
+if [ "$DELAY" -gt "$MAX_DELAY" ]; then
+    echo "Fehler: DELAY darf maximal $MAX_DELAY Minuten betragen."
+    exit 1
+fi
+
+SHUTDOWN_BIN="$(find_shutdown_bin || true)"
+
+if [ -z "$SHUTDOWN_BIN" ]; then
+    echo "Fehler: shutdown-Befehl wurde nicht gefunden."
+    exit 1
+fi
+
+echo "Skript: $SCRIPT_NAME wurde gestartet – Shutdown in $DELAY Minuten geplant."
+echo "Hinweis: Der geplante Shutdown kann mit cancel_shutdown.sh abgebrochen werden."
+echo "Achtung: Nach dem Herunterfahren ist normalerweise physischer Zugriff zum Einschalten erforderlich."
+echo
+
+"$SHUTDOWN_BIN" -h +"$DELAY"
+
+EXIT_CODE=$?
+
+if [ "$EXIT_CODE" -eq 0 ]; then
+    echo "Shutdown erfolgreich geplant."
+    exit 0
+else
+    echo "Fehler beim Planen des Shutdowns."
+    exit "$EXIT_CODE"
+fi
