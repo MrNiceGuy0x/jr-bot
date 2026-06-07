@@ -581,7 +581,7 @@ create_system_scripts() {
 
     info "Erstelle System-Skripte..."
 
-    sudo tee "$install_dir/scripts/system/reboot.sh" >/dev/null <<'EOF'
+    sudo tee "$install_dir/scripts/reboot.sh" >/dev/null <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -596,7 +596,7 @@ echo "[INFO] Scheduling reboot in ${DELAY_MINUTES} minute(s)."
 sudo /usr/sbin/shutdown -r "+${DELAY_MINUTES}" "JR-Bot scheduled reboot"
 EOF
 
-    sudo tee "$install_dir/scripts/system/cancel_reboot.sh" >/dev/null <<'EOF'
+    sudo tee "$install_dir/scripts/cancel_reboot.sh" >/dev/null <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -604,7 +604,7 @@ echo "[INFO] Cancelling scheduled reboot/shutdown if one exists."
 sudo /usr/sbin/shutdown -c || true
 EOF
 
-    sudo tee "$install_dir/scripts/system/shutdown.sh" >/dev/null <<'EOF'
+    sudo tee "$install_dir/scripts/shutdown.sh" >/dev/null <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -619,7 +619,7 @@ echo "[INFO] Scheduling shutdown in ${DELAY_MINUTES} minute(s)."
 sudo /usr/sbin/shutdown -h "+${DELAY_MINUTES}" "JR-Bot scheduled shutdown"
 EOF
 
-    sudo tee "$install_dir/scripts/system/cancel_shutdown.sh" >/dev/null <<'EOF'
+    sudo tee "$install_dir/scripts/cancel_shutdown.sh" >/dev/null <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -627,8 +627,8 @@ echo "[INFO] Cancelling scheduled shutdown/reboot if one exists."
 sudo /usr/sbin/shutdown -c || true
 EOF
 
-    sudo chmod 755 "$install_dir/scripts/system/"*.sh
-    sudo chown "${run_as_user}:${run_as_user}" "$install_dir/scripts/system/"*.sh
+    sudo chmod 755 "$install_dir/scripts/"*.sh
+    sudo chown "${run_as_user}:${run_as_user}" "$install_dir/scripts/"*.sh
 }
 
 create_check_scripts() {
@@ -637,11 +637,11 @@ create_check_scripts() {
 
     info "Erstelle Check-Skripte..."
 
-    sudo tee "$install_dir/scripts/checks/check_disk.sh" >/dev/null <<'EOF'
+    sudo tee "$install_dir/scripts/check_disk.sh" >/dev/null <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
-BOT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+BOT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 echo "=== JR-Bot Disk Check ==="
 echo "Bot path: ${BOT_PATH}"
@@ -658,7 +658,7 @@ if command -v lsblk >/dev/null 2>&1; then
 fi
 EOF
 
-    sudo tee "$install_dir/scripts/checks/check_memory.sh" >/dev/null <<'EOF'
+    sudo tee "$install_dir/scripts/check_memory.sh" >/dev/null <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -673,7 +673,7 @@ if command -v vmstat >/dev/null 2>&1; then
 fi
 EOF
 
-    sudo tee "$install_dir/scripts/checks/uptime_info.sh" >/dev/null <<'EOF'
+    sudo tee "$install_dir/scripts/uptime_info.sh" >/dev/null <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -690,8 +690,8 @@ echo "Boot time:"
 uptime -s 2>/dev/null || true
 EOF
 
-    sudo chmod 755 "$install_dir/scripts/checks/"*.sh
-    sudo chown "${run_as_user}:${run_as_user}" "$install_dir/scripts/checks/"*.sh
+    sudo chmod 755 "$install_dir/scripts/"*.sh
+    sudo chown "${run_as_user}:${run_as_user}" "$install_dir/scripts/"*.sh
 }
 
 create_ssh_maintenance_scripts() {
@@ -700,7 +700,7 @@ create_ssh_maintenance_scripts() {
 
     info "Erstelle SSH-Maintenance-Skripte..."
 
-    sudo tee "$install_dir/scripts/maintenance/ssh_status.sh" >/dev/null <<'EOF'
+    sudo tee "$install_dir/scripts/ssh_status.sh" >/dev/null <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail
 
@@ -719,7 +719,7 @@ echo "[is-enabled]"
 sudo /usr/bin/systemctl is-enabled ssh || true
 EOF
 
-    sudo tee "$install_dir/scripts/maintenance/ssh_start.sh" >/dev/null <<'EOF'
+    sudo tee "$install_dir/scripts/ssh_start.sh" >/dev/null <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -728,7 +728,7 @@ sudo /usr/bin/systemctl start ssh
 sudo /usr/bin/systemctl is-active ssh || true
 EOF
 
-    sudo tee "$install_dir/scripts/maintenance/ssh_stop.sh" >/dev/null <<'EOF'
+    sudo tee "$install_dir/scripts/ssh_stop.sh" >/dev/null <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -737,8 +737,8 @@ sudo /usr/bin/systemctl stop ssh
 sudo /usr/bin/systemctl is-active ssh || true
 EOF
 
-    sudo chmod 755 "$install_dir/scripts/maintenance/ssh_"*.sh
-    sudo chown "${run_as_user}:${run_as_user}" "$install_dir/scripts/maintenance/ssh_"*.sh
+    sudo chmod 755 "$install_dir/scripts/ssh_"*.sh
+    sudo chown "${run_as_user}:${run_as_user}" "$install_dir/scripts/ssh_"*.sh
 }
 
 create_script_docs() {
