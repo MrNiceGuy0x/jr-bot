@@ -830,17 +830,17 @@ EOF
 }
 
 # ----------------------------------------------------------
-# Download existing GitHub tools
+# Download existing GitHub audits
 # ----------------------------------------------------------
 
-download_github_tools() {
+download_github_audits() {
     local install_dir="$1"
     local run_as_user="$2"
 
-    info "Lade vorhandene GitHub Tools herunter..."
+    info "Lade vorhandene GitHub Audits herunter..."
 
-    local audit_target="$install_dir/scripts/maintenance/audit_jr-bot-structure.sh"
-    local audit_url="${GITHUB_RAW_BASE}/tools/audit_jr-bot-structure.sh"
+    local audit_target="$install_dir/audits/audit_jr-bot-structure.sh"
+    local audit_url="${GITHUB_RAW_BASE}/audits/audit_jr-bot-structure.sh"
 
     if curl -fsSL "$audit_url" -o /tmp/audit_jr-bot-structure.sh; then
         sudo mv /tmp/audit_jr-bot-structure.sh "$audit_target"
@@ -1597,7 +1597,7 @@ print_summary() {
     echo "Runner Logfile:           ${install_dir}/logs/job_runner.log"
     echo "Boot Report Script:       ${install_dir}/maintenance/jrbot_boot_report.sh"
     echo "Pending Reports:          ${install_dir}/reports/pending"
-    echo "Audit Script:             ${install_dir}/scripts/maintenance/audit_jr-bot-structure.sh"
+    echo "Audit Script:             ${install_dir}/audits/audit_jr-bot-structure.sh"
     echo
     echo "OPSCON:"
     echo "Boot Report Push URL:     ${boot_report_push_url}"
@@ -1622,7 +1622,7 @@ print_summary() {
     echo "sudo -u ${run_as_user} ${install_dir}/maintenance/jrbot_boot_report.sh --instance ${instance_name} --path ${install_dir} --mode one-liner --print-summary"
     echo
     echo "Audit-Test:"
-    echo "${install_dir}/scripts/maintenance/audit_jr-bot-structure.sh --instance ${instance_name} --path ${install_dir} --print-json"
+    echo "${install_dir}/audits/audit_jr-bot-structure.sh --instance ${instance_name} --path ${install_dir} --print-json"
     echo "=================================================="
 }
 
@@ -1738,7 +1738,7 @@ main() {
     create_ssh_maintenance_scripts "$INSTALL_DIR" "$RUN_AS_USER"
     create_script_docs "$INSTALL_DIR" "$RUN_AS_USER"
     create_boot_report_script "$INSTALL_DIR" "$RUN_AS_USER"
-    download_github_tools "$INSTALL_DIR" "$RUN_AS_USER"
+    download_github_audits "$INSTALL_DIR" "$RUN_AS_USER"
 
     if confirm_default_yes "Persistentes journald aktivieren?"; then
         enable_persistent_journald
