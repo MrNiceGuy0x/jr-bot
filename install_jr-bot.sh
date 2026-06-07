@@ -36,7 +36,7 @@ set -euo pipefail
 #
 # ==========================================================
 
-SCRIPT_VERSION="0.3.0"
+SCRIPT_VERSION="0.4.0"
 
 # ----------------------------------------------------------
 # Default values
@@ -50,15 +50,24 @@ DEFAULT_INSTALL_DIR="/opt/bots/trx"
 DEFAULT_SERVER_BASE="https://trax.blenk.co.at/handler"
 DEFAULT_INTERVAL_SECONDS="60"
 
-DEFAULT_BOOT_REPORT_PUSH_URL="https://opscon.blenk.co.at/api/jrbot_boot_report_ingest.php"
-DEFAULT_AUDIT_PUSH_URL="https://opscon.blenk.co.at/api/jrbot_audit_ingest.php"
+DEFAULT_BOOT_REPORT_AUDIT_PUSH_URL="https://opscon.blenk.co.at/api/jrbot_audit_boot_report_ingest.php"
+DEFAULT_STRUCTURE_AUDIT_PUSH_URL="https://opscon.blenk.co.at/api/jrbot_audit_structure_ingest.php"
+DEFAULT_NETWORK_HEALTH_AUDIT_PUSH_URL="https://opscon.blenk.co.at/api/jrbot_audit_network_health_ingest.php"
 
-GITHUB_RAW_BASE="https://raw.githubusercontent.com/MrNiceGuy0x/jr-bot/main"
+# Compatibility aliases for D6 migration.
+# These are intentionally kept during D6.1 so existing installer functions keep working
+# until D6.2-D6.4 replace the legacy boot-report flow completely.
+DEFAULT_BOOT_REPORT_PUSH_URL="${DEFAULT_BOOT_REPORT_AUDIT_PUSH_URL}"
+DEFAULT_AUDIT_PUSH_URL="${DEFAULT_STRUCTURE_AUDIT_PUSH_URL}"
+
+GITHUB_BRANCH="${JR_BOT_GITHUB_BRANCH:-main}"
+GITHUB_RAW_BASE="https://raw.githubusercontent.com/MrNiceGuy0x/jr-bot/${GITHUB_BRANCH}"
 
 SYSTEMD_RUNNER_SERVICE_TEMPLATE="/etc/systemd/system/bot-runner@.service"
 SYSTEMD_RUNNER_TIMER_TEMPLATE="/etc/systemd/system/bot-runner@.timer"
 
 SYSTEMD_BOOT_REPORT_SERVICE_TEMPLATE="/etc/systemd/system/jrbot-boot-report@.service"
+SYSTEMD_BOOT_REPORT_AUDIT_SERVICE_TEMPLATE="/etc/systemd/system/jrbot-boot-report-audit@.service"
 SYSTEMD_REPORT_UPLOAD_SERVICE_TEMPLATE="/etc/systemd/system/jrbot-report-upload@.service"
 SYSTEMD_REPORT_UPLOAD_TIMER_TEMPLATE="/etc/systemd/system/jrbot-report-upload@.timer"
 
