@@ -747,7 +747,7 @@ create_script_docs() {
 
     info "Erstelle Script-Dokumentationsdateien..."
 
-    local docs_dir="$install_dir/scripts/docs"
+    local docs_dir="$install_dir/docs/scripts"
 
     sudo tee "$docs_dir/reboot.md" >/dev/null <<'EOF'
 # reboot.sh
@@ -796,7 +796,7 @@ EOF
     sudo tee "$docs_dir/audit_jr-bot-structure.md" >/dev/null <<'EOF'
 # audit_jr-bot-structure.sh
 
-Read-only JR-Bot structure audit script downloaded from GitHub tools/.
+Read-only JR-Bot structure audit script downloaded from GitHub audits/.
 It checks host, network, storage, paths, files, Python/venv and systemd status without exposing secrets.
 EOF
 
