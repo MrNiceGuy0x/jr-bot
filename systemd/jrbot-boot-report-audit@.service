@@ -1,0 +1,56 @@
+# =========================================================
+# JR-Bot / OPSCON – Boot Report Audit systemd Unit
+# =========================================================
+#
+# Unit:
+#   /etc/systemd/system/jrbot-boot-report-audit@.service
+#
+# Project:
+#   JR-Bot / OPSCON
+#
+# Purpose:
+#   Runs the new hybrid boot report audit script for a JR-Bot
+#   instance after system boot or when started manually.
+#
+# Runtime script:
+#   /home/<instance>/bots/<instance>/audits/audit_jr-bot-boot-report.sh
+#
+# Migration note:
+#   This unit is intentionally separate from the legacy unit:
+#
+#   Legacy:
+#     jrbot-boot-report@.service
+#     maintenance/jrbot_boot_report.sh
+#
+#   New audit unit:
+#     jrbot-boot-report-audit@.service
+#     audits/audit_jr-bot-boot-report.sh
+#
+# This unit must not be enabled until the migration test is complete.
+# =========================================================
+
+[Unit]
+Description=JR-Bot Boot Report Audit for %i
+Documentation=https://github.com/MrNiceGuy0x/jr-bot
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=%i
+Group=%i
+WorkingDirectory=/home/%i/bots/%i
+
+ExecStartPre=/bin/sleep 45
+
+ExecStart=/bin/bash /home/%i/bots/%i/audits/audit_jr-bot-boot-report.sh \
+  --instance %i \
+  --path /home/%i/bots/%i \
+  --mode auto \
+  --print-summary
+
+TimeoutStartSec=180
+Nice=5
+
+[Install]
+WantedBy=multi-user.target
