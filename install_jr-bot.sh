@@ -302,21 +302,16 @@ create_directory_structure() {
     sudo mkdir -p "$install_dir"
     sudo mkdir -p "$install_dir/config"
     sudo mkdir -p "$install_dir/src"
+    sudo mkdir -p "$install_dir/scripts"
+    sudo mkdir -p "$install_dir/audits"
+    sudo mkdir -p "$install_dir/docs"
+    sudo mkdir -p "$install_dir/docs/scripts"
+    sudo mkdir -p "$install_dir/docs/audits"
+    sudo mkdir -p "$install_dir/reports"
+    sudo mkdir -p "$install_dir/reports/pending"
     sudo mkdir -p "$install_dir/logs"
     sudo mkdir -p "$install_dir/state"
     sudo mkdir -p "$install_dir/tmp"
-    sudo mkdir -p "$install_dir/tmp/script_output"
-    sudo mkdir -p "$install_dir/tmp/audit"
-
-    sudo mkdir -p "$install_dir/maintenance"
-    sudo mkdir -p "$install_dir/reports"
-    sudo mkdir -p "$install_dir/reports/pending"
-
-    sudo mkdir -p "$install_dir/scripts"
-    sudo mkdir -p "$install_dir/scripts/system"
-    sudo mkdir -p "$install_dir/scripts/checks"
-    sudo mkdir -p "$install_dir/scripts/maintenance"
-    sudo mkdir -p "$install_dir/scripts/docs"
 
     sudo chown -R "${run_as_user}:${run_as_user}" "$install_dir"
 
