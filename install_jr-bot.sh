@@ -54,19 +54,12 @@ DEFAULT_BOOT_REPORT_AUDIT_PUSH_URL="https://opscon.blenk.co.at/api/jrbot_audit_b
 DEFAULT_STRUCTURE_AUDIT_PUSH_URL="https://opscon.blenk.co.at/api/jrbot_audit_structure_ingest.php"
 DEFAULT_NETWORK_HEALTH_AUDIT_PUSH_URL="https://opscon.blenk.co.at/api/jrbot_audit_network_health_ingest.php"
 
-# Compatibility aliases for D6 migration.
-# These are intentionally kept during D6.1 so existing installer functions keep working
-# until D6.2-D6.4 replace the legacy boot-report flow completely.
-DEFAULT_BOOT_REPORT_PUSH_URL="${DEFAULT_BOOT_REPORT_AUDIT_PUSH_URL}"
-DEFAULT_AUDIT_PUSH_URL="${DEFAULT_STRUCTURE_AUDIT_PUSH_URL}"
-
 GITHUB_BRANCH="${JR_BOT_GITHUB_BRANCH:-main}"
 GITHUB_RAW_BASE="https://raw.githubusercontent.com/MrNiceGuy0x/jr-bot/${GITHUB_BRANCH}"
 
 SYSTEMD_RUNNER_SERVICE_TEMPLATE="/etc/systemd/system/bot-runner@.service"
 SYSTEMD_RUNNER_TIMER_TEMPLATE="/etc/systemd/system/bot-runner@.timer"
 
-SYSTEMD_BOOT_REPORT_SERVICE_TEMPLATE="/etc/systemd/system/jrbot-boot-report@.service"
 SYSTEMD_BOOT_REPORT_AUDIT_SERVICE_TEMPLATE="/etc/systemd/system/jrbot-boot-report-audit@.service"
 SYSTEMD_REPORT_UPLOAD_SERVICE_TEMPLATE="/etc/systemd/system/jrbot-report-upload@.service"
 SYSTEMD_REPORT_UPLOAD_TIMER_TEMPLATE="/etc/systemd/system/jrbot-report-upload@.timer"
@@ -456,8 +449,8 @@ Boot report service: jrbot-boot-report-audit@${instance_name}.service
 Pending report upload timer: jrbot-report-upload@${instance_name}.timer
 Interval seconds: ${interval_seconds}
 
-Boot report push URL: ${boot_report_push_url}
-Audit push URL: ${audit_push_url}
+Boot report audit push URL: ${boot_report_push_url}
+Structure audit push URL: ${audit_push_url}
 
 Installed at UTC: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
 EOF
@@ -1074,8 +1067,8 @@ print_summary() {
     echo "Audit Script:             ${install_dir}/audits/audit_jr-bot-structure.sh"
     echo
     echo "OPSCON:"
-    echo "Boot Report Push URL:     ${boot_report_push_url}"
-    echo "Audit Push URL:           ${audit_push_url}"
+    echo "Boot Report Audit Push URL:   ${boot_report_push_url}"
+    echo "Structure Audit Push URL:     ${audit_push_url}"
     echo
     echo "systemd:"
     echo "Runner Timer:             bot-runner@${instance_name}.timer"
@@ -1140,8 +1133,8 @@ main() {
     INTERVAL_SECONDS="$(ask_with_default "Polling-Intervall in Sekunden" "$DEFAULT_INTERVAL_SECONDS")"
     validate_interval "$INTERVAL_SECONDS"
 
-    BOOT_REPORT_PUSH_URL="$(ask_with_default "Boot Report Push URL" "$DEFAULT_BOOT_REPORT_PUSH_URL")"
-    AUDIT_PUSH_URL="$(ask_with_default "Audit Push URL" "$DEFAULT_AUDIT_PUSH_URL")"
+    BOOT_REPORT_PUSH_URL="$(ask_with_default "Boot Report Audit Push URL" "$DEFAULT_BOOT_REPORT_AUDIT_PUSH_URL")"
+    AUDIT_PUSH_URL="$(ask_with_default "Structure Audit Push URL" "$DEFAULT_STRUCTURE_AUDIT_PUSH_URL")"
 
     echo
     echo "Sensible Werte werden jetzt lokal abgefragt."
@@ -1162,8 +1155,8 @@ main() {
     echo "Backend:                   remote_api"
     echo "Server Base URL:           ${SERVER_BASE}"
     echo "Polling-Intervall:         ${INTERVAL_SECONDS} Sekunden"
-    echo "Boot Report Push URL:      ${BOOT_REPORT_PUSH_URL}"
-    echo "Audit Push URL:            ${AUDIT_PUSH_URL}"
+    echo "Boot Report Audit Push URL:   ${BOOT_REPORT_PUSH_URL}"
+    echo "Structure Audit Push URL:     ${AUDIT_PUSH_URL}"
     echo "systemd Runner Timer:      bot-runner@${INSTANCE_NAME}.timer"
     echo "Boot Report Service:       jrbot-boot-report-audit@${INSTANCE_NAME}.service"
     echo "Pending Upload Timer:      jrbot-report-upload@${INSTANCE_NAME}.timer"
