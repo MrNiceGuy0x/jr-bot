@@ -19,7 +19,7 @@ set -euo pipefail
 #   - Pi stores only local runtime config, logs, state, reports and venv
 #   - systemd template units:
 #       - bot-runner@.service / bot-runner@.timer
-#       - jrbot-boot-report@.service
+#       - jrbot-boot-report-audit@.service
 #       - jrbot-report-upload@.service / jrbot-report-upload@.timer
 #
 # Security:
@@ -452,7 +452,7 @@ Install dir: ${install_dir}
 Run as user: ${run_as_user}
 Backend: remote_api
 Systemd runner timer: bot-runner@${instance_name}.timer
-Boot report service: jrbot-boot-report@${instance_name}.service
+Boot report service: jrbot-boot-report-audit@${instance_name}.service
 Pending report upload timer: jrbot-report-upload@${instance_name}.timer
 Interval seconds: ${interval_seconds}
 
@@ -939,9 +939,9 @@ EOF
 install_boot_report_systemd_templates() {
     info "Installiere Boot-Report systemd Template Units..."
 
-    sudo tee "$SYSTEMD_BOOT_REPORT_SERVICE_TEMPLATE" >/dev/null <<'EOF'
+    sudo tee "$SYSTEMD_BOOT_REPORT_AUDIT_SERVICE_TEMPLATE" >/dev/null <<'EOF'
 [Unit]
-Description=JR-Bot Boot Report for %i
+Description=JR-Bot Boot Report Audit for %i
 After=network-online.target
 Wants=network-online.target
 
@@ -951,7 +951,7 @@ User=%i
 Group=%i
 WorkingDirectory=/opt/bots/%i
 ExecStartPre=/bin/sleep 30
-ExecStart=/opt/bots/%i/maintenance/jrbot_boot_report.sh --instance %i --path /opt/bots/%i --mode one-liner
+ExecStart=/opt/bots/%i/audits/audit_jr-bot-boot-report.sh --instance %i --path /opt/bots/%i --mode one-liner
 
 StandardOutput=journal
 StandardError=journal
@@ -962,7 +962,7 @@ EOF
 
     sudo tee "$SYSTEMD_REPORT_UPLOAD_SERVICE_TEMPLATE" >/dev/null <<'EOF'
 [Unit]
-Description=JR-Bot Pending Report Upload for %i
+Description=JR-Bot Pending Boot Report Audit Upload for %i
 After=network-online.target
 Wants=network-online.target
 
@@ -971,7 +971,7 @@ Type=oneshot
 User=%i
 Group=%i
 WorkingDirectory=/opt/bots/%i
-ExecStart=/opt/bots/%i/maintenance/jrbot_boot_report.sh --instance %i --path /opt/bots/%i --mode upload-pending
+ExecStart=/opt/bots/%i/audits/audit_jr-bot-boot-report.sh --instance %i --path /opt/bots/%i --mode upload-pending
 
 StandardOutput=journal
 StandardError=journal
@@ -979,7 +979,7 @@ EOF
 
     sudo tee "$SYSTEMD_REPORT_UPLOAD_TIMER_TEMPLATE" >/dev/null <<'EOF'
 [Unit]
-Description=JR-Bot Pending Report Upload Timer for %i
+Description=JR-Bot Pending Boot Report Audit Upload Timer for %i
 
 [Timer]
 OnBootSec=2min
@@ -1002,7 +1002,7 @@ enable_systemd_units() {
     sudo systemctl daemon-reload
 
     sudo systemctl enable --now "bot-runner@${instance_name}.timer"
-    sudo systemctl enable "jrbot-boot-report@${instance_name}.service"
+    sudo systemctl enable "jrbot-boot-report-audit@${instance_name}.service"
     sudo systemctl enable --now "jrbot-report-upload@${instance_name}.timer"
 
     info "systemd Units aktiviert."
@@ -1079,16 +1079,16 @@ print_summary() {
     echo "systemd:"
     echo "Runner Timer:             bot-runner@${instance_name}.timer"
     echo "Runner Service:           bot-runner@${instance_name}.service"
-    echo "Boot Report Service:      jrbot-boot-report@${instance_name}.service"
+    echo "Boot Report Service:      jrbot-boot-report-audit@${instance_name}.service"
     echo "Pending Upload Timer:     jrbot-report-upload@${instance_name}.timer"
     echo
     echo "Prüfbefehle:"
     echo "sudo systemctl status bot-runner@${instance_name}.timer"
     echo "sudo systemctl status bot-runner@${instance_name}.service"
-    echo "sudo systemctl status jrbot-boot-report@${instance_name}.service"
+    echo "sudo systemctl status jrbot-boot-report-audit@${instance_name}.service"
     echo "sudo systemctl status jrbot-report-upload@${instance_name}.timer"
     echo "sudo journalctl -u bot-runner@${instance_name}.service --no-pager"
-    echo "sudo journalctl -u jrbot-boot-report@${instance_name}.service --no-pager"
+    echo "sudo journalctl -u jrbot-boot-report-audit@${instance_name}.service --no-pager"
     echo
     echo "Manuelle Testbefehle:"
     echo "sudo -u ${run_as_user} ${install_dir}/venv/bin/python ${install_dir}/src/job_runner.py --config ${install_dir}/config/config.ini"
@@ -1164,7 +1164,7 @@ main() {
     echo "Boot Report Push URL:      ${BOOT_REPORT_PUSH_URL}"
     echo "Audit Push URL:            ${AUDIT_PUSH_URL}"
     echo "systemd Runner Timer:      bot-runner@${INSTANCE_NAME}.timer"
-    echo "Boot Report Service:       jrbot-boot-report@${INSTANCE_NAME}.service"
+    echo "Boot Report Service:       jrbot-boot-report-audit@${INSTANCE_NAME}.service"
     echo "Pending Upload Timer:      jrbot-report-upload@${INSTANCE_NAME}.timer"
     echo
 
