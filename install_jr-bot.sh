@@ -1028,7 +1028,7 @@ run_manual_boot_report_test() {
 
     info "Führe manuellen Boot-Report-Testlauf aus..."
 
-    sudo -u "$run_as_user" "$install_dir/maintenance/jrbot_boot_report.sh" \
+    sudo -u "$run_as_user" "$install_dir/audits/audit_jr-bot-boot-report.sh" \
         --instance "$instance_name" \
         --path "$install_dir" \
         --mode one-liner \
@@ -1068,7 +1068,7 @@ print_summary() {
     echo "Report Token:             ${install_dir}/config/report_upload.token"
     echo "Runner:                   ${install_dir}/src/job_runner.py"
     echo "Runner Logfile:           ${install_dir}/logs/job_runner.log"
-    echo "Boot Report Script:       ${install_dir}/maintenance/jrbot_boot_report.sh"
+    echo "Boot Report Audit:        ${install_dir}/audits/audit_jr-bot-boot-report.sh"
     echo "Pending Reports:          ${install_dir}/reports/pending"
     echo "Audit Script:             ${install_dir}/audits/audit_jr-bot-structure.sh"
     echo
@@ -1092,7 +1092,7 @@ print_summary() {
     echo
     echo "Manuelle Testbefehle:"
     echo "sudo -u ${run_as_user} ${install_dir}/venv/bin/python ${install_dir}/src/job_runner.py --config ${install_dir}/config/config.ini"
-    echo "sudo -u ${run_as_user} ${install_dir}/maintenance/jrbot_boot_report.sh --instance ${instance_name} --path ${install_dir} --mode one-liner --print-summary"
+    echo "sudo -u ${run_as_user} ${install_dir}/audits/audit_jr-bot-boot-report.sh --instance ${instance_name} --path ${install_dir} --mode one-liner --print-summary"
     echo
     echo "Audit-Test:"
     echo "${install_dir}/audits/audit_jr-bot-structure.sh --instance ${instance_name} --path ${install_dir} --print-json"
