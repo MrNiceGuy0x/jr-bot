@@ -748,6 +748,7 @@ create_script_docs() {
     info "Erstelle Script-Dokumentationsdateien..."
 
     local docs_dir="$install_dir/docs/scripts"
+    local audit_docs_dir="$install_dir/docs/audits"
 
     sudo tee "$docs_dir/reboot.md" >/dev/null <<'EOF'
 # reboot.sh
@@ -793,7 +794,7 @@ EOF
 Shows hostname, system identity and uptime information.
 EOF
 
-    sudo tee "$docs_dir/audit_jr-bot-structure.md" >/dev/null <<'EOF'
+    sudo tee "$audit_docs_dir/audit_jr-bot-structure.md" >/dev/null <<'EOF'
 # audit_jr-bot-structure.sh
 
 Read-only JR-Bot structure audit script downloaded from GitHub audits/.
@@ -818,15 +819,15 @@ EOF
 Stops the SSH service via systemctl.
 EOF
 
-    sudo tee "$docs_dir/jrbot_boot_report.md" >/dev/null <<'EOF'
-# jrbot_boot_report.sh
+    sudo tee "$audit_docs_dir/audit_jr-bot-boot-report.md" >/dev/null <<'EOF'
+# audit_jr-bot-boot-report.sh
 
-Creates a compact boot/network/service report after boot.
-Reports are stored under reports/pending/ and uploaded to OPSCON if REPORT_UPLOAD_TOKEN and push URL are available.
+Creates a compact boot/network/service audit report after boot.
+Audit reports are stored under reports/pending/ and uploaded to OPSCON if REPORT_UPLOAD_TOKEN and push URL are available.
 EOF
 
-    sudo chown "${run_as_user}:${run_as_user}" "$docs_dir/"*.md
-    sudo chmod 644 "$docs_dir/"*.md
+    sudo chown "${run_as_user}:${run_as_user}" "$docs_dir/"*.md "$audit_docs_dir/"*.md
+    sudo chmod 644 "$docs_dir/"*.md "$audit_docs_dir/"*.md
 }
 
 # ----------------------------------------------------------
