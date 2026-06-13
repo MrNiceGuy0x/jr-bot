@@ -26,6 +26,12 @@ set -euo pipefail
 #   - No secrets are embedded in this script
 #   - SERVER_TOKEN, PING_TOKEN and REPORT_UPLOAD_TOKEN are requested interactively
 #   - Local config.ini is stored with chmod 600
+#
+# Base Image Compatibility:
+#   - Designed for Raspberry Pi OS Lite / Headless based on Raspbian GNU/Linux 12 (bookworm)
+#   - Start this installer from a neutral admin user, e.g. jradmin
+#   - Do not use the admin user as the bot runtime user
+#   - The installer creates the bot runtime user, e.g. trx, dmr or ggb
 #   - Local report_upload.token is stored with chmod 600
 #
 # Boot Report:
@@ -45,8 +51,6 @@ SCRIPT_VERSION="0.4.0"
 DEFAULT_PROJECT_NAME="TRAX"
 DEFAULT_BOT_NAME="TRX"
 DEFAULT_INSTANCE_NAME="trx"
-DEFAULT_RUN_AS_USER="trx"
-DEFAULT_INSTALL_DIR="/opt/bots/trx"
 DEFAULT_SERVER_BASE="https://trax.blenk.co.at/handler"
 DEFAULT_INTERVAL_SECONDS="60"
 
@@ -192,13 +196,36 @@ validate_instance_name() {
     if [[ ! "$instance" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
         die "Ungültiger Instanzname: ${instance}. Erlaubt: lowercase a-z, 0-9, _ und -; muss mit Buchstabe/Zahl starten."
     fi
+
+    if [ "${#instance}" -lt 3 ] || [ "${#instance}" -gt 8 ]; then
+        die "Ungültiger Instanzname: ${instance}. Der technische Shortcode muss 3 bis 8 Zeichen lang sein, z. B. trx, dmr, ggb, hugo oder jrtest."
+    fi
 }
 
 validate_user_name() {
     local user="$1"
 
     if [[ ! "$user" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]]; then
-        die "Ungültiger Linux-Benutzername: ${user}"
+        die "Ungültiger Linux-Benutzername: ${user}. Erlaubt sind lowercase Linux-Usernamen, z. B. trx, dmr, ggb oder hugo."
+    fi
+
+    if [ "${#user}" -lt 3 ] || [ "${#user}" -gt 8 ]; then
+        die "Ungültiger Linux-Benutzername: ${user}. Der Bot-Runtime-User muss 3 bis 8 Zeichen lang sein."
+    fi
+}
+
+validate_runtime_user_separation() {
+    local run_as_user="$1"
+    local admin_user="${SUDO_USER:-$(id -un)}"
+
+    case "$run_as_user" in
+        root|pi|admin|jradmin|www-data|systemd-network|systemd-resolve|daemon|nobody)
+            die "Der Bot-Runtime-User '${run_as_user}' ist reserviert. Verwende einen technischen Bot-Shortcode, z. B. trx, dmr, ggb oder hugo."
+            ;;
+    esac
+
+    if [ "$run_as_user" = "$admin_user" ]; then
+        die "Der Bot-Runtime-User darf nicht identisch mit dem aktuellen Admin-User '${admin_user}' sein. Verwende z. B. trx, dmr, ggb oder hugo."
     fi
 }
 
@@ -1106,25 +1133,24 @@ main() {
     echo "----------"
     echo "Standardmodus: Remote Project API"
     echo "Zielbild: ein JR-Bot pro Pi / Node"
+    echo "Base Image: neutraler Admin-User, z. B. jradmin"
+    echo "Projektname: Anzeige-/Projektname, z. B. TRAX, DOMERA oder Guild Guard"
+    echo "Bot-Kurzname: 3 bis 8 Zeichen, z. B. TRX, DMR, GGB, HUGO oder JRTEST"
+    echo "Instanzname, Linux-User, Installationspfad und systemd-Name werden automatisch daraus abgeleitet."
     echo "Default: TRAX / TRX"
     echo
-
     PROJECT_NAME="$(ask_with_default "Projektname" "$DEFAULT_PROJECT_NAME")"
-    BOT_NAME="$(ask_with_default "Botname" "$DEFAULT_BOT_NAME")"
+    BOT_NAME="$(ask_with_default "Bot-Kurzname / Botname" "$DEFAULT_BOT_NAME")"
 
-    SUGGESTED_INSTANCE="$(normalize_instance_name "$BOT_NAME")"
-    if [ -z "$SUGGESTED_INSTANCE" ]; then
-        SUGGESTED_INSTANCE="$DEFAULT_INSTANCE_NAME"
+    INSTANCE_NAME="$(normalize_instance_name "$BOT_NAME")"
+    if [ -z "$INSTANCE_NAME" ]; then
+        INSTANCE_NAME="$DEFAULT_INSTANCE_NAME"
     fi
-
-    INSTANCE_NAME="$(ask_with_default "Instanzname / systemd-Name" "$SUGGESTED_INSTANCE")"
-    INSTANCE_NAME="$(normalize_instance_name "$INSTANCE_NAME")"
     validate_instance_name "$INSTANCE_NAME"
 
-    SUGGESTED_RUN_USER="$INSTANCE_NAME"
-    RUN_AS_USER="$(ask_with_default "Linux-Benutzer für Bot-Ausführung" "$SUGGESTED_RUN_USER")"
-    RUN_AS_USER="$(normalize_instance_name "$RUN_AS_USER")"
+    RUN_AS_USER="$INSTANCE_NAME"
     validate_user_name "$RUN_AS_USER"
+    validate_runtime_user_separation "$RUN_AS_USER"
 
     SUGGESTED_INSTALL_DIR="/opt/bots/${INSTANCE_NAME}"
     INSTALL_DIR="$(ask_with_default "Installationsordner" "$SUGGESTED_INSTALL_DIR")"
