@@ -3,7 +3,7 @@ set -euo pipefail
 
 # ==========================================================
 # JR-Bot Universal Installer
-# Version: 0.3.0
+# Version: 0.4.0
 # ==========================================================
 #
 # Purpose:
@@ -494,13 +494,13 @@ create_job_runner() {
     local install_dir="$1"
     local run_as_user="$2"
 
-    info "Erstelle job_runner.py für v0.3..."
+    info "Erstelle job_runner.py für v0.4.0..."
 
     sudo tee "$install_dir/src/job_runner.py" >/dev/null <<'EOF'
 #!/usr/bin/env python3
 """
 JR-Bot job_runner.py
-Version: 0.3 placeholder
+Version: 0.4.0
 
 This runner currently verifies:
 - config.ini loading
