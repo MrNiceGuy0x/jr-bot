@@ -118,9 +118,9 @@ ask_secret_required() {
 
     while [ -z "$value" ]; do
         read -rsp "${prompt}: " value </dev/tty
-        echo
+        echo >/dev/tty
         if [ -z "$value" ]; then
-            echo "Dieser Wert darf nicht leer sein."
+            echo "Dieser Wert darf nicht leer sein." >/dev/tty
         fi
     done
 
@@ -132,7 +132,7 @@ ask_secret_optional() {
     local value=""
 
     read -rsp "${prompt} (leer lassen zum Überspringen): " value </dev/tty
-    echo
+    echo >/dev/tty
 
     echo "$value"
 }
