@@ -40,14 +40,14 @@ set -euo pipefail
 #   unknown - path exists, but no clear profile markers detected
 #
 # Supported modes:
-#   auto, legacy, target, hybrid, migrate, test, boot
+#   auto, legacy, target, hybrid, migrate, test, boot, upload-pending
 #
 # The script auto-detects the profile by default. Explicit --mode
 # values are still preserved in the JSON as mode_requested.
 #
 # ==========================================================
 
-SCRIPT_VERSION="0.2.0"
+SCRIPT_VERSION="0.2.1"
 SCHEMA_VERSION="jrbot-boot-report-audit-v1"
 
 # ----------------------------------------------------------
@@ -104,7 +104,7 @@ Options:
   --instance <name>       Bot instance, e.g. ggb, dmr, trx
   --path <bot-path>       Bot base path, e.g. /home/ggb/bots/ggb or /opt/bots/trx
   --legacy                Shortcut for --mode legacy
-  --mode <mode>           Mode marker: auto, legacy, target, hybrid, migrate, test, boot
+  --mode <mode>           Mode marker: auto, legacy, target, hybrid, migrate, test, boot, upload-pending
   --push-url <url>        OPSCON boot report audit ingest endpoint
   --token <token>         Report upload token
   --no-upload             Only create local pending report, do not upload
@@ -123,6 +123,10 @@ Default behavior:
   - Attempts to upload all pending reports
   - Deletes uploaded reports locally after successful upload
   - Keeps reports locally if upload fails
+
+Upload retry behavior:
+  - --mode upload-pending only uploads existing pending reports
+  - --mode upload-pending never creates a new report
 
 Examples:
   ./audit_jr-bot-boot-report.sh --instance ggb --path /home/ggb/bots/ggb --mode auto --token <TOKEN> --print-summary
@@ -289,7 +293,7 @@ detect_profile() {
 
 MODE_REQUESTED="$(echo "$MODE" | tr '[:upper:]' '[:lower:]')"
 case "$MODE_REQUESTED" in
-    auto|legacy|target|hybrid|migrate|test|boot)
+    auto|legacy|target|hybrid|migrate|test|boot|upload-pending)
         ;;
     one-liner|oneliner)
         MODE_REQUESTED="target"
@@ -315,11 +319,136 @@ MODE="$MODE_REQUESTED"
 
 
 # ----------------------------------------------------------
+# Upload-only mode guard
+# ----------------------------------------------------------
+#
+# Important:
+# --mode upload-pending is used by jrbot-report-upload@.service
+# as a retry mechanism. It must never create a new report.
+# Therefore the upload helper functions are defined before the
+# report generation block and upload-pending exits before
+# REPORT_FILE is created.
+
+# ----------------------------------------------------------
+# Upload helper
+# ----------------------------------------------------------
+
+upload_one_report() {
+    local file="$1"
+
+    if [[ "$NO_UPLOAD" == "true" ]]; then
+        warn "Upload deaktiviert (--no-upload). Report bleibt lokal: $file"
+        return 1
+    fi
+
+    if [[ -z "$PUSH_URL" ]]; then
+        warn "Keine Push-URL gesetzt. Report bleibt lokal: $file"
+        return 1
+    fi
+
+    if [[ -z "$TOKEN" ]]; then
+        warn "Kein REPORT_UPLOAD_TOKEN vorhanden. Report bleibt lokal: $file"
+        return 1
+    fi
+
+    if ! command -v curl >/dev/null 2>&1; then
+        warn "curl nicht verfügbar. Report bleibt lokal: $file"
+        return 1
+    fi
+
+    local response_file
+    response_file="$(mktemp /tmp/jrbot-boot-report-upload-response.XXXXXX.txt)"
+
+    info "Sende Boot-Report-Audit an OPSCON: $(basename "$file")"
+
+    local http_code
+    http_code="$(curl -fsSL \
+        -w "%{http_code}" \
+        -o "$response_file" \
+        -X POST \
+        -F "token=${TOKEN}" \
+        -F "instance=${INSTANCE}" \
+        -F "mode=${MODE_REQUESTED}" \
+        -F "audit_file=@${file};type=application/json" \
+        "$PUSH_URL" || true)"
+
+    if [[ "$http_code" != "200" ]]; then
+        warn "Upload fehlgeschlagen für $(basename "$file"). HTTP-Code: ${http_code}"
+
+        if [[ -s "$response_file" ]]; then
+            cat "$response_file" >&2
+            echo >&2
+        fi
+
+        rm -f "$response_file"
+        return 1
+    fi
+
+    info "Upload erfolgreich für $(basename "$file")."
+
+    if [[ -s "$response_file" ]]; then
+        cat "$response_file" >&2
+        echo >&2
+    fi
+
+    rm -f "$response_file"
+
+    if [[ "$KEEP_LOCAL" == "true" ]]; then
+        info "Lokaler Report bleibt erhalten wegen --keep-local: $file"
+    else
+        rm -f "$file"
+        info "Lokaler Report wurde nach erfolgreichem Upload gelöscht: $file"
+    fi
+
+    return 0
+}
+
+# ----------------------------------------------------------
+# Upload all pending reports
+# ----------------------------------------------------------
+
+upload_pending_reports() {
+    shopt -s nullglob
+
+    local files=("$PENDING_DIR"/audit_jr-bot-boot-report-"$INSTANCE"-*.json "$PENDING_DIR"/jrbot-boot-report-"$INSTANCE"-*.json)
+
+    if [[ ${#files[@]} -eq 0 ]]; then
+        info "Keine pending Boot-Reports vorhanden."
+        return 0
+    fi
+
+    local success_count=0
+    local fail_count=0
+
+    for file in "${files[@]}"; do
+        if upload_one_report "$file"; then
+            success_count=$((success_count + 1))
+        else
+            fail_count=$((fail_count + 1))
+        fi
+    done
+
+    info "Upload-Zusammenfassung: success=${success_count}, failed=${fail_count}"
+
+    if [[ "$fail_count" -gt 0 ]]; then
+        return 1
+    fi
+
+    return 0
+}
+
+# ----------------------------------------------------------
 # Basic command checks
 # ----------------------------------------------------------
 
 if ! command -v python3 >/dev/null 2>&1; then
     die "python3 wird benötigt."
+fi
+if [[ "$MODE_REQUESTED" == "upload-pending" ]]; then
+    info "Upload-pending mode: only uploading existing pending boot reports. No new report will be generated."
+    upload_pending_reports || true
+    info "Boot report audit upload-pending completed."
+    exit 0
 fi
 
 # ----------------------------------------------------------
@@ -928,113 +1057,6 @@ print("")
 PY
 fi
 
-# ----------------------------------------------------------
-# Upload helper
-# ----------------------------------------------------------
-
-upload_one_report() {
-    local file="$1"
-
-    if [[ "$NO_UPLOAD" == "true" ]]; then
-        warn "Upload deaktiviert (--no-upload). Report bleibt lokal: $file"
-        return 1
-    fi
-
-    if [[ -z "$PUSH_URL" ]]; then
-        warn "Keine Push-URL gesetzt. Report bleibt lokal: $file"
-        return 1
-    fi
-
-    if [[ -z "$TOKEN" ]]; then
-        warn "Kein REPORT_UPLOAD_TOKEN vorhanden. Report bleibt lokal: $file"
-        return 1
-    fi
-
-    if ! command -v curl >/dev/null 2>&1; then
-        warn "curl nicht verfügbar. Report bleibt lokal: $file"
-        return 1
-    fi
-
-    local response_file
-    response_file="$(mktemp /tmp/jrbot-boot-report-upload-response.XXXXXX.txt)"
-
-    info "Sende Boot-Report-Audit an OPSCON: $(basename "$file")"
-
-    local http_code
-    http_code="$(curl -fsSL \
-        -w "%{http_code}" \
-        -o "$response_file" \
-        -X POST \
-        -F "token=${TOKEN}" \
-        -F "instance=${INSTANCE}" \
-        -F "mode=${MODE_REQUESTED}" \
-        -F "audit_file=@${file};type=application/json" \
-        "$PUSH_URL" || true)"
-
-    if [[ "$http_code" != "200" ]]; then
-        warn "Upload fehlgeschlagen für $(basename "$file"). HTTP-Code: ${http_code}"
-
-        if [[ -s "$response_file" ]]; then
-            cat "$response_file" >&2
-            echo >&2
-        fi
-
-        rm -f "$response_file"
-        return 1
-    fi
-
-    info "Upload erfolgreich für $(basename "$file")."
-
-    if [[ -s "$response_file" ]]; then
-        cat "$response_file" >&2
-        echo >&2
-    fi
-
-    rm -f "$response_file"
-
-    if [[ "$KEEP_LOCAL" == "true" ]]; then
-        info "Lokaler Report bleibt erhalten wegen --keep-local: $file"
-    else
-        rm -f "$file"
-        info "Lokaler Report wurde nach erfolgreichem Upload gelöscht: $file"
-    fi
-
-    return 0
-}
-
-# ----------------------------------------------------------
-# Upload all pending reports
-# ----------------------------------------------------------
-
-upload_pending_reports() {
-    shopt -s nullglob
-
-    local files=("$PENDING_DIR"/audit_jr-bot-boot-report-"$INSTANCE"-*.json "$PENDING_DIR"/jrbot-boot-report-"$INSTANCE"-*.json)
-
-    if [[ ${#files[@]} -eq 0 ]]; then
-        info "Keine pending Boot-Reports vorhanden."
-        return 0
-    fi
-
-    local success_count=0
-    local fail_count=0
-
-    for file in "${files[@]}"; do
-        if upload_one_report "$file"; then
-            success_count=$((success_count + 1))
-        else
-            fail_count=$((fail_count + 1))
-        fi
-    done
-
-    info "Upload-Zusammenfassung: success=${success_count}, failed=${fail_count}"
-
-    if [[ "$fail_count" -gt 0 ]]; then
-        return 1
-    fi
-
-    return 0
-}
 
 upload_pending_reports || true
 
