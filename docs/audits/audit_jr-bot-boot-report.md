@@ -7,7 +7,7 @@ Script: audits/audit_jr-bot-boot-report.sh
 Project: JR-Bot / OPSCON
 Type: Hybrid boot report audit script
 Status: Active migration
-Version: 0.2.0
+Version: 0.2.1
 Schema: jrbot-boot-report-audit-v1
 Default endpoint: <OPSCON_BASE_URL>/api/jrbot_audit_boot_report_ingest.php
 Local pending path: <bot-path>/reports/pending/
@@ -368,4 +368,34 @@ The legacy boot-report unit can remain active independently.
 audits/audit_jr-bot-boot-report.sh
 systemd/jrbot-boot-report-audit@.service
 docs/audits/audit_jr-bot-boot-report.md
+```
+
+---
+
+## D7.3 / D7.4 Regression Contract
+
+The boot report audit follows the shared JR-Bot / OPSCON audit ingest contract:
+
+```text
+docs/audits/audit-ingest-contract.md
+```
+
+Critical D7 rules:
+
+- `--mode upload-pending` is retry-only.
+- `--mode upload-pending` must never create a new boot report.
+- `jrbot-report-upload@.service` may call `--mode upload-pending` on a timer.
+- In upload-pending mode, the script must upload only existing files from `<bot-path>/reports/pending/`.
+- Public OPSCON ingest endpoints must use instance-specific token validation.
+- Token hashes must be stored under `/OPSCON/data/<audit-type>/<instance>/_security/ingest_token_sha256`.
+- Public ingest endpoints must not auto-create `_security`.
+- The retry timer must not be started until the corresponding OPSCON ingest endpoint has been corrected.
+
+Regression check:
+
+```text
+before=$(find <bot-path>/reports/pending -maxdepth 1 -type f -name "*.json" | wc -l)
+audits/audit_jr-bot-boot-report.sh --instance <instance> --path <bot-path> --mode upload-pending
+after=$(find <bot-path>/reports/pending -maxdepth 1 -type f -name "*.json" | wc -l)
+test "$before" = "$after"
 ```
