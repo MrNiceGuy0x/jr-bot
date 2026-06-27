@@ -1,17 +1,17 @@
 # JR-Bot Boot Report Audit Handbook
 
-**Status:** Active / TRX validated  
-**Handbook Version:** 1.0  
-**Runtime Script Version Reference:** 0.2.2  
-**Target Runtime Hardening Level:** D7.6-compatible / validated on TRX  
-**Project:** JR-Bot / OPSCON  
-**Recommended Repository Path:** `docs/audits/audit_jr-bot-boot-report.md`  
-**Related Runtime Script:** `audits/audit_jr-bot-boot-report.sh`  
-**Legacy Runtime Script Path:** `maintenance/jrbot_boot_report.sh`  
-**Expected JSON Schema:** `jrbot-boot-report-audit-v1`  
-**Audit Type:** `audit_jr-bot-boot-report`  
-**Job Key:** `audit_jr-bot-boot-report`  
-**Last Updated:** 2026-06-27  
+**Status:** Active / TRX validated
+**Handbook Version:** 1.0
+**Runtime Script Version Reference:** 0.2.2
+**Target Runtime Hardening Level:** D7.6-compatible / validated on TRX
+**Project:** JR-Bot / OPSCON
+**Recommended Repository Path:** `docs/audits/audit_jr-bot-boot-report.md`
+**Related Runtime Script:** `audits/audit_jr-bot-boot-report.sh`
+**Legacy Runtime Script Path:** `maintenance/jrbot_boot_report.sh`
+**Expected JSON Schema:** `jrbot-boot-report-audit-v1`
+**Audit Type:** `audit_jr-bot-boot-report`
+**Job Key:** `audit_jr-bot-boot-report`
+**Last Updated:** 2026-06-27
 
 ---
 
@@ -517,30 +517,30 @@ Current required structure:
 
 ```text
 /OPSCON/data/
-└── audit_jr-bot-boot-report/
-    ├── dmr/
-    │   ├── _security/
-    │   │   ├── .htaccess
-    │   │   └── ingest_token_sha256
-    │   ├── audit_jr-bot-boot-report-dmr.json
-    │   └── history/
-    │       └── audit_jr-bot-boot-report-dmr-YYYYMMDD_HHMMSS.json
-    │
-    ├── ggb/
-    │   ├── _security/
-    │   │   ├── .htaccess
-    │   │   └── ingest_token_sha256
-    │   ├── audit_jr-bot-boot-report-ggb.json
-    │   └── history/
-    │       └── audit_jr-bot-boot-report-ggb-YYYYMMDD_HHMMSS.json
-    │
-    └── trx/
-        ├── _security/
-        │   ├── .htaccess
-        │   └── ingest_token_sha256
-        ├── audit_jr-bot-boot-report-trx.json
-        └── history/
-            └── audit_jr-bot-boot-report-trx-YYYYMMDD_HHMMSS.json
+â””â”€â”€ audit_jr-bot-boot-report/
+    â”œâ”€â”€ dmr/
+    â”‚   â”œâ”€â”€ _security/
+    â”‚   â”‚   â”œâ”€â”€ .htaccess
+    â”‚   â”‚   â””â”€â”€ ingest_token_sha256
+    â”‚   â”œâ”€â”€ audit_jr-bot-boot-report-dmr.json
+    â”‚   â””â”€â”€ history/
+    â”‚       â””â”€â”€ audit_jr-bot-boot-report-dmr-YYYYMMDD_HHMMSS.json
+    â”‚
+    â”œâ”€â”€ ggb/
+    â”‚   â”œâ”€â”€ _security/
+    â”‚   â”‚   â”œâ”€â”€ .htaccess
+    â”‚   â”‚   â””â”€â”€ ingest_token_sha256
+    â”‚   â”œâ”€â”€ audit_jr-bot-boot-report-ggb.json
+    â”‚   â””â”€â”€ history/
+    â”‚       â””â”€â”€ audit_jr-bot-boot-report-ggb-YYYYMMDD_HHMMSS.json
+    â”‚
+    â””â”€â”€ trx/
+        â”œâ”€â”€ _security/
+        â”‚   â”œâ”€â”€ .htaccess
+        â”‚   â””â”€â”€ ingest_token_sha256
+        â”œâ”€â”€ audit_jr-bot-boot-report-trx.json
+        â””â”€â”€ history/
+            â””â”€â”€ audit_jr-bot-boot-report-trx-YYYYMMDD_HHMMSS.json
 ```
 
 This is not the current valid model:
@@ -1283,27 +1283,27 @@ The current One-Liner target layout for a JR-Bot instance is:
 
 ```text
 /opt/bots/{instance}/
-├── audits/
-│   ├── audit_jr-bot-boot-report.sh
-│   ├── audit_jr-bot-network-health.sh
-│   └── audit_jr-bot-structure.sh
-├── config/
-│   ├── config.ini
-│   └── report_upload.token
-├── docs/
-│   ├── audits/
-│   └── scripts/
-├── logs/
-├── reports/
-│   └── pending/
-├── scripts/
-├── src/
-│   └── job_runner.py
-├── state/
-├── tmp/
-├── venv/
-├── install_info.txt
-└── requirements.txt
+â”œâ”€â”€ audits/
+â”‚   â”œâ”€â”€ audit_jr-bot-boot-report.sh
+â”‚   â”œâ”€â”€ audit_jr-bot-network-health.sh
+â”‚   â””â”€â”€ audit_jr-bot-structure.sh
+â”œâ”€â”€ config/
+â”‚   â”œâ”€â”€ config.ini
+â”‚   â””â”€â”€ report_upload.token
+â”œâ”€â”€ docs/
+â”‚   â”œâ”€â”€ audits/
+â”‚   â””â”€â”€ scripts/
+â”œâ”€â”€ logs/
+â”œâ”€â”€ reports/
+â”‚   â””â”€â”€ pending/
+â”œâ”€â”€ scripts/
+â”œâ”€â”€ src/
+â”‚   â””â”€â”€ job_runner.py
+â”œâ”€â”€ state/
+â”œâ”€â”€ tmp/
+â”œâ”€â”€ venv/
+â”œâ”€â”€ install_info.txt
+â””â”€â”€ requirements.txt
 ```
 
 Target Boot Report runtime path:
@@ -1441,7 +1441,7 @@ Expected One-Liner target path pattern:
 Known target assignment:
 
 ```text
-DMR → 192.168.178.201
+DMR â†’ 192.168.178.201
 ```
 
 Possible legacy command:
@@ -1458,7 +1458,7 @@ Possible legacy command:
 Known target assignment:
 
 ```text
-GGB → 192.168.178.202
+GGB â†’ 192.168.178.202
 ```
 
 Possible legacy/hybrid command:
@@ -1482,25 +1482,25 @@ Recommended target GitHub repository structure:
 
 ```text
 jr-bot/
-├── install_jr-bot.sh
-├── audits/
-│   ├── audit_jr-bot-boot-report.sh
-│   ├── audit_jr-bot-network-health.sh
-│   └── audit_jr-bot-structure.sh
-├── docs/
-│   ├── architecture.md
-│   └── audits/
-│       ├── audit-ingest-contract.md
-│       ├── audit_jr-bot-boot-report.md
-│       ├── audit_jr-bot-network-health.md
-│       └── audit_jr-bot-structure.md
-├── runtime/
-│   ├── src/
-│   ├── scripts/
-│   ├── requirements.txt
-│   └── templates/
-└── systemd/
-    └── templates/
+â”œâ”€â”€ install_jr-bot.sh
+â”œâ”€â”€ audits/
+â”‚   â”œâ”€â”€ audit_jr-bot-boot-report.sh
+â”‚   â”œâ”€â”€ audit_jr-bot-network-health.sh
+â”‚   â””â”€â”€ audit_jr-bot-structure.sh
+â”œâ”€â”€ docs/
+â”‚   â”œâ”€â”€ architecture.md
+â”‚   â””â”€â”€ audits/
+â”‚       â”œâ”€â”€ audit-ingest-contract.md
+â”‚       â”œâ”€â”€ audit_jr-bot-boot-report.md
+â”‚       â”œâ”€â”€ audit_jr-bot-network-health.md
+â”‚       â””â”€â”€ audit_jr-bot-structure.md
+â”œâ”€â”€ runtime/
+â”‚   â”œâ”€â”€ src/
+â”‚   â”œâ”€â”€ scripts/
+â”‚   â”œâ”€â”€ requirements.txt
+â”‚   â””â”€â”€ templates/
+â””â”€â”€ systemd/
+    â””â”€â”€ templates/
 ```
 
 This handbook belongs in the repository at:
@@ -1525,10 +1525,10 @@ Recommended local structure:
 
 ```text
 /opt/bots/{instance}/docs/audits/
-├── audit-ingest-contract.md
-├── audit_jr-bot-boot-report.md
-├── audit_jr-bot-network-health.md
-└── audit_jr-bot-structure.md
+â”œâ”€â”€ audit-ingest-contract.md
+â”œâ”€â”€ audit_jr-bot-boot-report.md
+â”œâ”€â”€ audit_jr-bot-network-health.md
+â””â”€â”€ audit_jr-bot-structure.md
 ```
 
 For legacy bots:
@@ -1542,9 +1542,9 @@ Recommended local audits:
 
 ```text
 /opt/bots/{instance}/audits/
-├── audit_jr-bot-boot-report.sh
-├── audit_jr-bot-network-health.sh
-└── audit_jr-bot-structure.sh
+â”œâ”€â”€ audit_jr-bot-boot-report.sh
+â”œâ”€â”€ audit_jr-bot-network-health.sh
+â””â”€â”€ audit_jr-bot-structure.sh
 ```
 
 Recommended local reports:
@@ -1815,9 +1815,9 @@ Current instance-scoped token-hash path:
 Healthy current assignments:
 
 ```text
-DMR → 192.168.178.201
-GGB → 192.168.178.202
-TRX → 192.168.178.203
+DMR â†’ 192.168.178.201
+GGB â†’ 192.168.178.202
+TRX â†’ 192.168.178.203
 ```
 
 Normal upload uses the central per-bot fallback token if no audit-specific token exists:
@@ -1852,3 +1852,4 @@ Later it should also exist locally on each bot:
 ```text
 /opt/bots/{instance}/docs/audits/audit_jr-bot-boot-report.md
 ```
+
