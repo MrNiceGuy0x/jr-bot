@@ -915,6 +915,7 @@ def tree_snapshot(base: Path, max_depth: int, max_items: int) -> dict[str, Any]:
 
 def collect_runtime_structure(systemd_data: dict[str, Any]) -> dict[str, Any]:
     scripts_dir = INSTALL_PATH / "scripts"
+    audits_dir = INSTALL_PATH / "audits"
     maintenance_dir = INSTALL_PATH / "maintenance"
     reports_dir = INSTALL_PATH / "reports"
     docs_dir = INSTALL_PATH / "docs"
@@ -933,6 +934,7 @@ def collect_runtime_structure(systemd_data: dict[str, Any]) -> dict[str, Any]:
     }
 
     boot_report_candidates = [
+        audits_dir / "audit_jr-bot-boot-report.sh",
         maintenance_dir / "jrbot_boot_report.sh",
         scripts_dir / "maintenance" / "jrbot_boot_report.sh",
         scripts_dir / "system" / "jrbot_boot_report.sh",
@@ -1053,7 +1055,7 @@ def collect_runtime_structure(systemd_data: dict[str, Any]) -> dict[str, Any]:
         add_deviation(
             "warning",
             "BOOT_REPORT_SCRIPT_MISSING",
-            "No jrbot_boot_report.sh script detected.",
+            "No boot report audit script detected.",
         )
 
     if not systemd_data["service_template"]["exists"] and not systemd_data["legacy_service"]["exists"]:

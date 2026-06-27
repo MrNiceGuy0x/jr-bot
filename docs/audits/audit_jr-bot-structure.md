@@ -1,16 +1,16 @@
 # JR-Bot Structure Audit Handbook
 
-**Status:** Active / runtime hardening pending  
-**Handbook Version:** 1.2  
-**Current Public Runtime Script Version Reference:** 0.1.6  
-**Target Runtime Hardening Level:** D7.6-compatible  
-**Project:** JR-Bot / OPSCON  
-**Recommended Repository Path:** `docs/audits/audit_jr-bot-structure.md`  
-**Current Legacy Runtime Script Path:** `tools/audit_jr-bot-structure.sh`  
-**Target Runtime Script Path:** `audits/audit_jr-bot-structure.sh`  
-**Expected JSON Schema:** `jrbot-structure-audit-v1`  
-**Audit Type:** `audit_jr-bot-structure`  
-**Last Updated:** 2026-06-27  
+**Status:** Active / TRX validated
+**Handbook Version:** 1.3
+**Current Public Runtime Script Version Reference:** 0.2.0
+**Target Runtime Hardening Level:** D7.6-compatible / validated on TRX
+**Project:** JR-Bot / OPSCON
+**Recommended Repository Path:** `docs/audits/audit_jr-bot-structure.md`
+**Legacy Runtime Script Path:** `tools/audit_jr-bot-structure.sh`
+**Target Runtime Script Path:** `audits/audit_jr-bot-structure.sh`
+**Expected JSON Schema:** `jrbot-structure-audit-v1`
+**Audit Type:** `audit_jr-bot-structure`
+**Last Updated:** 2026-06-27
 
 ---
 
@@ -34,21 +34,21 @@
 16. [Expected JSON Root Structure](#16-expected-json-root-structure)
 17. [JSON Block: `security`](#17-json-block-security)
 18. [JSON Block: `host`](#18-json-block-host)
-19. [JSON Block: `bot_context`](#19-json-block-bot_context)
+19. [JSON Block: `network`](#19-json-block-network)
 20. [JSON Block: `storage`](#20-json-block-storage)
-21. [JSON Block: `directory_layout`](#21-json-block-directory_layout)
-22. [JSON Block: `runtime_files`](#22-json-block-runtime_files)
-23. [JSON Block: `config_state`](#23-json-block-config_state)
-24. [JSON Block: `python_runtime`](#24-json-block-python_runtime)
+21. [JSON Block: `paths`](#21-json-block-paths)
+22. [JSON Block: `runtime_structure`](#22-json-block-runtime_structure)
+23. [JSON Block: `files`](#23-json-block-files)
+24. [JSON Block: `python`](#24-json-block-python)
 25. [JSON Block: `systemd`](#25-json-block-systemd)
-26. [JSON Block: `maintenance_scripts`](#26-json-block-maintenance_scripts)
-27. [JSON Block: `profile_detection`](#27-json-block-profile_detection)
-28. [JSON Block: `analysis`](#28-json-block-analysis)
-29. [Findings and Recommendations](#29-findings-and-recommendations)
-30. [Known Finding Codes](#30-known-finding-codes)
+26. [Boot Report Detection](#26-boot-report-detection)
+27. [Profile Detection](#27-profile-detection)
+28. [Summary Interpretation](#28-summary-interpretation)
+29. [Findings and Deviations](#29-findings-and-deviations)
+30. [Known Finding and Deviation Codes](#30-known-finding-and-deviation-codes)
 31. [Target One-Liner Layout](#31-target-one-liner-layout)
 32. [Legacy and Hybrid Layout Context](#32-legacy-and-hybrid-layout-context)
-33. [TRX Validation Target](#33-trx-validation-target)
+33. [TRX Validation Result](#33-trx-validation-result)
 34. [Repository Documentation Structure](#34-repository-documentation-structure)
 35. [Local Documentation for Future JR-Agents](#35-local-documentation-for-future-jr-agents)
 36. [Cleanup of Legacy OPSCON Structure](#36-cleanup-of-legacy-opscon-structure)
@@ -131,22 +131,24 @@ It is not intended as a deep network diagnostic tool and does not replace the Ne
 
 ## 3. Current Repository and Runtime Status
 
-The current public `main` state may still contain the Structure Audit runtime script under the legacy path:
-
-```text
-tools/audit_jr-bot-structure.sh
-```
-
-The intended target path is:
+The current target repository path is:
 
 ```text
 audits/audit_jr-bot-structure.sh
 ```
 
-The current public runtime version reference is:
+The old legacy repository path was:
 
 ```text
-0.1.6
+tools/audit_jr-bot-structure.sh
+```
+
+The old `tools/` location must not be used as the target path anymore.
+
+Current validated runtime version reference:
+
+```text
+0.2.0
 ```
 
 The expected schema is:
@@ -167,9 +169,15 @@ The current OPSCON ingest endpoint is:
 https://opscon.blenk.co.at/api/jrbot_audit_structure_ingest.php
 ```
 
+Validated OPSCON ingest endpoint version:
+
+```text
+1.2
+```
+
 ### Migration Note
 
-The repository is being migrated from:
+The repository has been migrated from:
 
 ```text
 tools/
@@ -184,17 +192,20 @@ audits/
 Current target state:
 
 ```text
-tools/audit_jr-bot-structure.sh       legacy location, to be removed or migrated
-audits/audit_jr-bot-structure.sh      target location
+audits/audit_jr-bot-structure.sh
 ```
 
-The Network Health Audit has already been moved to `audits/`.
+The Structure Audit now follows the same target folder model as Network Health and Boot Report:
 
-The Structure Audit should follow the same cleanup pattern when its D7.6-compatible runtime version is ready and validated.
+```text
+audits/audit_jr-bot-network-health.sh
+audits/audit_jr-bot-boot-report.sh
+audits/audit_jr-bot-structure.sh
+```
 
-### Required Before Rollout
+### Runtime Validation State
 
-Before Structure Audit is considered production-ready for unattended OPSCON upload, it must be aligned with the D7.6 upload-hardening contract:
+The Structure Audit has been validated on TRX with the D7.6-compatible upload model:
 
 - default OPSCON upload endpoint,
 - environment token fallback,
@@ -204,10 +215,14 @@ Before Structure Audit is considered production-ready for unattended OPSCON uplo
 - temporary curl config via `mktemp`,
 - `chmod 600` on temporary curl config,
 - hard curl timeouts:
-  - `connect-timeout = 10`
+  - `connect-timeout = 10`,
   - `max-time = 60`.
 
----
+The runtime also detects the new Boot Report audit path:
+
+```text
+/opt/bots/{instance}/audits/audit_jr-bot-boot-report.sh
+```
 
 ## 4. Security Model
 
@@ -373,9 +388,17 @@ If the current runtime script differs from this table, the runtime script should
 
 ## 7. Runtime Output Location
 
-The Structure Audit should write the JSON file locally first.
+The Structure Audit writes a JSON file locally first.
 
-Target pending output:
+Current validated behavior on TRX:
+
+```text
+/tmp/audit_jr-bot-structure-{instance}-YYYYMMDD_HHMMSS.json
+```
+
+The temporary file is deleted after a successful upload unless `--keep-local` or `--output` was used.
+
+Target pending output for future retry-capable operation:
 
 ```text
 {bot_path}/reports/pending/audit_jr-bot-structure-{instance}-YYYYMMDD_HHMMSS.json
@@ -387,16 +410,12 @@ Example:
 /opt/bots/trx/reports/pending/audit_jr-bot-structure-trx-YYYYMMDD_HHMMSS.json
 ```
 
-Current older runtime versions may still use `/tmp` as default output.
-
 Target behavior for One-Liner runtime:
 
-- write reports under `{bot_path}/reports/pending/`,
+- write a local report first,
 - upload to OPSCON if configured,
 - delete local temporary report after successful upload unless `--keep-local` or `--output` was used,
 - keep report for debugging or retry if upload fails.
-
----
 
 ## 8. OPSCON Endpoint
 
@@ -412,6 +431,12 @@ Full URL:
 https://opscon.blenk.co.at/api/jrbot_audit_structure_ingest.php
 ```
 
+Validated endpoint version:
+
+```text
+1.2
+```
+
 Expected storage base:
 
 ```text
@@ -419,8 +444,6 @@ Expected storage base:
 ```
 
 The endpoint must use the instance-scoped ingest-token contract described below.
-
----
 
 ## 9. OPSCON Storage Structure
 
@@ -508,7 +531,7 @@ Example for TRX:
 Example hash-file content:
 
 ```text
-9bdfb23776a56168e8cec2f98b6a28a323b80968ff20fd1851ee5c1e330667b6
+{sha256_ORIGINAL_UPLOAD_TOKEN}
 ```
 
 Important:
@@ -767,6 +790,7 @@ Successful OPSCON response example:
   "stored_file": "/data/audit_jr-bot-structure/trx/audit_jr-bot-structure-trx.json",
   "history_file": "/data/audit_jr-bot-structure/trx/history/audit_jr-bot-structure-trx-YYYYMMDD_HHMMSS.json",
   "token_scope": "instance",
+  "token_source": "header",
   "received_at_utc": "YYYY-MM-DDTHH:MM:SSZ"
 }
 ```
@@ -782,33 +806,32 @@ Important response fields:
 | `stored_file` | Latest report path. |
 | `history_file` | Historical report path. |
 | `token_scope` | Should be `instance`. |
+| `token_source` | Should be `header` for the hardened runtime. |
 | `received_at_utc` | Server-side receive timestamp. |
-
----
 
 ## 16. Expected JSON Root Structure
 
-The script should generate JSON with this high-level structure:
+Runtime version `0.2.0` currently generates JSON with this high-level structure:
 
 ```json
 {
   "schema": "jrbot-structure-audit-v1",
-  "script_version": "0.1.6",
+  "script_version": "0.2.0",
   "instance": "trx",
   "mode": "target",
   "created_at_utc": "2026-06-27T00:00:00Z",
   "security": {},
   "host": {},
-  "bot_context": {},
+  "network": {},
   "storage": {},
-  "directory_layout": {},
-  "runtime_files": {},
-  "config_state": {},
-  "python_runtime": {},
+  "paths": {},
+  "runtime_structure": {},
+  "user": {},
+  "files": {},
+  "python": {},
   "systemd": {},
-  "maintenance_scripts": {},
-  "profile_detection": {},
-  "analysis": {}
+  "summary": {},
+  "opscon_ingest": {}
 }
 ```
 
@@ -817,8 +840,6 @@ The exact field names may evolve with runtime updates, but the schema name must 
 The `opscon_ingest` block is not generated by the runtime script.
 
 It is added by the OPSCON ingest endpoint after successful upload.
-
----
 
 ## 17. JSON Block: `security`
 
@@ -865,31 +886,21 @@ This helps compare DMR, GGB and TRX at the system level.
 
 ---
 
-## 19. JSON Block: `bot_context`
+## 19. JSON Block: `network`
 
-The `bot_context` block connects the structure report to the bot installation.
+The `network` block provides a compact local network baseline.
 
-Expected fields:
+Typical fields:
 
-| Field | Meaning |
-|---|---|
-| `install_path` | Expected bot installation directory. |
-| `install_path_exists` | Whether the directory exists. |
-| `instance` | Bot instance name. |
-| `mode` | Requested mode, for example `legacy` or `target`. |
+- hostname IP output,
+- all IPv4 addresses,
+- primary IPv4 address,
+- primary network interface,
+- default gateway,
+- default route,
+- SSH service state.
 
-Example:
-
-```json
-"bot_context": {
-  "install_path": "/opt/bots/trx",
-  "install_path_exists": true,
-  "instance": "trx",
-  "mode": "target"
-}
-```
-
----
+This does not replace the Network Health Audit. It is included to help interpret the node structure and systemd accessibility.
 
 ## 20. JSON Block: `storage`
 
@@ -909,245 +920,224 @@ This block is useful for diagnosing SD-card pressure and disk-full conditions.
 
 ---
 
-## 21. JSON Block: `directory_layout`
+## 21. JSON Block: `paths`
 
-The `directory_layout` block should report expected directories.
+The `paths` block reports important top-level runtime paths.
 
-Target directories:
+Validated TRX examples:
 
 ```text
-/opt/bots/{instance}/
-/opt/bots/{instance}/audits/
-/opt/bots/{instance}/config/
-/opt/bots/{instance}/logs/
-/opt/bots/{instance}/reports/
-/opt/bots/{instance}/reports/pending/
-/opt/bots/{instance}/runtime/
-/opt/bots/{instance}/scripts/
+/opt/bots/trx
+/opt/bots/trx/config
+/opt/bots/trx/src
+/opt/bots/trx/logs
+/opt/bots/trx/state
+/opt/bots/trx/tmp
+/opt/bots/trx/venv
+/opt/bots/trx/data
 ```
 
-For each directory, the audit should report at least:
+For each path, the audit reports whether it exists.
 
-- exists,
-- is directory,
-- owner,
-- group,
-- permissions,
-- whether it matches the target expectation.
+## 22. JSON Block: `runtime_structure`
 
----
+The `runtime_structure` block is the main structural evidence block.
 
-## 22. JSON Block: `runtime_files`
+It contains:
 
-The `runtime_files` block should report important runtime files.
+- detected profile,
+- expected layout,
+- requested mode,
+- top-level entries,
+- known directories,
+- known scripts,
+- tree snapshot,
+- deviations.
+
+Validated TRX profile:
+
+```text
+profile_detected: template
+expected_layout: one_liner_v0_3_target
+mode_requested: target
+```
+
+The Tree Snapshot captures the relevant runtime layout while omitting very large or noisy subtrees, such as full virtual environment content.
+
+## 23. JSON Block: `files`
+
+The `files` block reports important runtime files.
 
 Examples:
 
 ```text
-install_jr-bot.sh
-audits/audit_jr-bot-structure.sh
-audits/audit_jr-bot-network-health.sh
-audits/audit_jr-bot-boot-report.sh
-runtime/src/job_runner.py
-runtime/requirements.txt
-config/config.ini
-config/report_upload.token
+/opt/bots/{instance}/config/config.ini
+/opt/bots/{instance}/.env
+/opt/bots/{instance}/src/job_runner.py
+/opt/bots/{instance}/requirements.txt
+/opt/bots/{instance}/install_info.txt
 ```
 
-For sensitive files, only metadata should be collected.
+For sensitive files, only metadata and key presence should be collected.
 
 Token content must never be included.
 
----
+## 24. JSON Block: `python`
 
-## 23. JSON Block: `config_state`
-
-The `config_state` block should identify configuration style and expected key presence.
-
-Expected config styles:
-
-```text
-config.ini
-.env
-hybrid
-missing
-```
-
-Recommended checks:
-
-- `config/config.ini` exists,
-- `.env` exists,
-- key presence,
-- no secret values,
-- mode or instance indicators,
-- OPSCON base URL presence,
-- report upload token file presence.
-
-Example key-presence output:
-
-```json
-"contains_keys": {
-  "SERVER_BASE": true,
-  "SERVER_TOKEN": true,
-  "PING_TOKEN": false
-}
-```
-
----
-
-## 24. JSON Block: `python_runtime`
-
-The `python_runtime` block should describe Python and venv readiness.
+The `python` block describes Python and venv readiness.
 
 Typical checks:
 
-- system Python availability,
-- Python version,
-- venv path,
-- venv Python executable,
-- pip availability,
-- requirements file existence,
-- whether expected packages appear installed,
-- job runner import readiness if safe to test.
+- system Python version,
+- venv Python availability,
+- venv pip availability,
+- venv Python version,
+- `requests` import,
+- `dotenv` import.
 
-Target venv pattern:
+Validated TRX state:
 
 ```text
-/opt/bots/{instance}/runtime/venv/
+system_python: Python 3.11.2
+venv_python_exists: true
+venv_pip_exists: true
+requests_import: true
+dotenv_import: true
 ```
-
----
 
 ## 25. JSON Block: `systemd`
 
-The `systemd` block should describe service and timer integration.
+The `systemd` block describes service and timer integration.
 
 Expected target units may include:
 
 ```text
 bot-runner@{instance}.service
 bot-runner@{instance}.timer
-jrbot-boot-report-audit@{instance}.service
-jrbot-report-upload@{instance}.service
-jrbot-report-upload@{instance}.timer
 ```
 
-For each unit, the audit should collect:
+For each unit, the audit may collect:
 
-- load state,
 - active state,
+- load state,
 - sub state,
-- unit file state,
-- result,
-- fragment path,
-- description,
-- recent relevant status if safe.
+- enabled state when available,
+- template existence,
+- legacy unit existence.
 
-The Structure Audit should not restart or reload systemd units.
-
----
-
-## 26. JSON Block: `maintenance_scripts`
-
-The `maintenance_scripts` block should report known scripts and operational helpers.
-
-Examples:
+Validated TRX state:
 
 ```text
-scripts/maintenance/reboot.sh
-scripts/maintenance/update.sh
-scripts/checks/
-scripts/system/
-audits/
+bot-runner@trx.timer: enabled and active
+bot-runner@trx.service: loaded but inactive/dead when not currently running
+legacy trx-runner units: absent
 ```
 
-The audit should report:
+The Structure Audit must not restart, stop, reload or enable systemd units.
 
-- file exists,
-- executable bit,
-- owner/group,
-- path relative to bot base,
-- whether expected maintenance script is missing.
+## 26. Boot Report Detection
 
----
+The Structure Audit must detect the Boot Report audit under the current target path:
 
-## 27. JSON Block: `profile_detection`
+```text
+/opt/bots/{instance}/audits/audit_jr-bot-boot-report.sh
+```
 
-The `profile_detection` block should classify the installation.
+This path is the primary target candidate.
+
+Legacy candidates may still be checked for migration context:
+
+```text
+/opt/bots/{instance}/maintenance/jrbot_boot_report.sh
+/opt/bots/{instance}/scripts/maintenance/jrbot_boot_report.sh
+/opt/bots/{instance}/scripts/system/jrbot_boot_report.sh
+/opt/bots/{instance}/jrbot_boot_report.sh
+```
+
+A validated TRX report must show:
+
+```text
+boot_report_script_detected: true
+```
+
+and the deviation code below must be absent:
+
+```text
+BOOT_REPORT_SCRIPT_MISSING
+```
+
+This detection was fixed after the `audits/` migration so that the Structure Audit no longer reports the Boot Report as missing when it exists under `audits/audit_jr-bot-boot-report.sh`.
+
+## 27. Profile Detection
+
+The `profile_detected` field classifies the installation.
 
 Expected profile states:
 
 | Profile | Meaning |
 |---|---|
 | `target` | Matches the current One-Liner target layout. |
+| `template` | Matches the current systemd-template based One-Liner runtime pattern. |
 | `legacy` | Older DMR/GGB style layout. |
 | `hybrid` | Transitional structure with both legacy and target elements. |
 | `unknown` | Path exists but does not match a known profile. |
 
 The profile should be based on directory layout, config style, systemd units, and runtime files.
 
----
+## 28. Summary Interpretation
 
-## 28. JSON Block: `analysis`
+The `summary` block contains the high-level interpretation.
 
-The `analysis` block contains the high-level interpretation.
-
-Expected structure:
+Validated structure:
 
 ```json
-"analysis": {
-  "health_state": "warning",
-  "critical_count": 0,
-  "warning_count": 2,
-  "findings": [],
-  "recommendations": [],
-  "comparison_hints": []
+"summary": {
+  "ok_basic_structure": true,
+  "profile_detected": "template",
+  "deviation_count": 1,
+  "checks": {
+    "install_dir_exists": true,
+    "job_runner_exists": true,
+    "config_or_env_exists": true,
+    "venv_python_exists": true,
+    "systemd_timer_known": true,
+    "storage_root_available": true,
+    "storage_bot_available": true,
+    "scripts_dir_exists": true,
+    "maintenance_available": false,
+    "reports_dir_exists": true,
+    "boot_report_script_detected": true,
+    "reboot_script_detected": true
+  }
 }
 ```
 
-Possible `health_state` values:
-
-| Value | Meaning |
-|---|---|
-| `ok` | No critical or warning findings. |
-| `warning` | At least one warning, no critical findings. |
-| `critical` | At least one critical finding. |
-
-Important:
+Important interpretation rule:
 
 ```text
-info findings do not make health_state warning
-ok findings do not make health_state warning
+deviation != failure
 ```
 
----
+For example, `MAINTENANCE_DIR_MISSING` is expected for the current TRX target layout because the legacy `maintenance/` directory is no longer the primary target location.
 
-## 29. Findings and Recommendations
+## 29. Findings and Deviations
 
-Findings are observations.
+Findings or deviations are observations.
 
-Recommendations are suggested actions.
+They must be interpreted in the context of the selected layout and migration phase.
 
-Example:
+Example deviation:
 
 ```json
-"findings": [
-  {
-    "level": "warning",
-    "code": "MISSING_TARGET_DIRECTORY",
-    "message": "Expected target directory is missing.",
-    "evidence": "/opt/bots/trx/reports/pending"
-  }
-],
-"recommendations": [
-  {
-    "level": "warning",
-    "code": "CREATE_TARGET_DIRECTORY",
-    "message": "Create missing target directory during installer or onboarding.",
-    "action": "mkdir -p /opt/bots/trx/reports/pending"
-  }
-]
+{
+  "level": "warning",
+  "code": "MAINTENANCE_DIR_MISSING",
+  "message": "No maintenance directory detected.",
+  "path": "/opt/bots/trx/maintenance"
+}
 ```
+
+This is expected for the current TRX target structure and should not block the Structure Audit.
 
 ### Finding Levels
 
@@ -1162,15 +1152,14 @@ Example:
 
 ```text
 finding != failure
+deviation != failure
 ```
 
 For example, a legacy layout can produce warnings without meaning the current bot is broken.
 
----
+## 30. Known Finding and Deviation Codes
 
-## 30. Known Finding Codes
-
-Recommended finding codes:
+Recommended finding and deviation codes:
 
 | Code | Level | Meaning |
 |---|---|---|
@@ -1182,16 +1171,16 @@ Recommended finding codes:
 | `MISSING_REPORTS_PENDING` | warning | `reports/pending` is missing. |
 | `MISSING_CONFIG_DIR` | warning | `config/` directory is missing. |
 | `MISSING_AUDITS_DIR` | warning | `audits/` directory is missing. |
-| `MISSING_RUNTIME_DIR` | warning | `runtime/` directory is missing. |
+| `MISSING_RUNTIME_DIR` | warning | Legacy or older runtime directory expectation is missing. |
 | `MISSING_VENV` | warning | Python virtual environment is missing. |
 | `MISSING_CONFIG` | warning | No supported config file found. |
 | `SECRET_VALUE_EXPOSURE_RISK` | critical | Secret values appear in report content. |
 | `SYSTEMD_UNIT_MISSING` | warning | Expected systemd unit missing. |
 | `SYSTEMD_UNIT_NOT_ENABLED` | warning | Expected unit exists but is not enabled. |
 | `SCRIPT_NOT_EXECUTABLE` | warning | Expected script exists but lacks executable bit. |
+| `BOOT_REPORT_SCRIPT_MISSING` | warning | No boot report audit script was detected in any known path. |
+| `MAINTENANCE_DIR_MISSING` | warning | Legacy maintenance directory is absent. Expected for the current TRX target layout. |
 | `TARGET_READY` | ok | Node appears ready for target-layout operation. |
-
----
 
 ## 31. Target One-Liner Layout
 
@@ -1206,17 +1195,30 @@ The current One-Liner target layout for a JR-Bot instance is:
 ├── config/
 │   ├── config.ini
 │   └── report_upload.token
+├── docs/
+│   ├── audits/
+│   └── scripts/
 ├── logs/
 ├── reports/
 │   └── pending/
-├── runtime/
-│   ├── src/
-│   ├── venv/
-│   └── requirements.txt
-└── scripts/
-    ├── checks/
-    ├── maintenance/
-    └── system/
+├── scripts/
+│   ├── cancel_reboot.sh
+│   ├── cancel_shutdown.sh
+│   ├── check_disk.sh
+│   ├── check_memory.sh
+│   ├── reboot.sh
+│   ├── shutdown.sh
+│   ├── ssh_start.sh
+│   ├── ssh_status.sh
+│   ├── ssh_stop.sh
+│   └── uptime_info.sh
+├── src/
+│   └── job_runner.py
+├── state/
+├── tmp/
+├── venv/
+├── install_info.txt
+└── requirements.txt
 ```
 
 Example for TRX:
@@ -1225,14 +1227,25 @@ Example for TRX:
 /opt/bots/trx/
 ├── audits/
 ├── config/
+├── docs/
 ├── logs/
 ├── reports/
 │   └── pending/
-├── runtime/
-└── scripts/
+├── scripts/
+├── src/
+├── state/
+├── tmp/
+└── venv/
 ```
 
----
+Important target-layout rule:
+
+```text
+scripts/ is flat for operative scripts.
+audits/ contains audit, diagnostic and report scripts.
+maintenance/ is legacy and not required in the current TRX target layout.
+tools/ is legacy and must not be used as the target path.
+```
 
 ## 32. Legacy and Hybrid Layout Context
 
@@ -1306,11 +1319,11 @@ Expected target command:
 
 ---
 
-## 33. TRX Validation Target
+## 33. TRX Validation Result
 
-Structure runtime validation is still pending.
+Structure runtime validation is completed for TRX.
 
-TRX validation target:
+Validation target:
 
 ```text
 Host: 192.168.178.203
@@ -1320,49 +1333,72 @@ Runtime user: trx
 Target runtime script: /opt/bots/trx/audits/audit_jr-bot-structure.sh
 ```
 
-Required validation steps:
+Validated runtime result:
 
 ```text
-1. Provision OPSCON server directory:
-   /OPSCON/data/audit_jr-bot-structure/trx/
-
-2. Provision instance-scoped security:
-   /OPSCON/data/audit_jr-bot-structure/trx/_security/
-   /OPSCON/data/audit_jr-bot-structure/trx/_security/ingest_token_sha256
-
-3. Install or update runtime script on the bot host.
-
-4. Run bash syntax check.
-
-5. Run Structure Audit without explicit --push-url and without explicit --token.
-
-6. Verify OPSCON accepted the upload.
-
-7. Verify OPSCON stored latest report.
-
-8. Verify OPSCON stored history report.
-
-9. Verify local pending-file handling.
-
-10. Verify no token is visible through process arguments.
+Script version: 0.2.0
+Schema: jrbot-structure-audit-v1
+Mode: target
+OPSCON endpoint: jrbot_audit_structure_ingest.php
+OPSCON endpoint version: 1.2
+Token scope: instance
+Token source: header
+Upload result: success
+Local pending count after upload: 0
+Temporary local report deleted after successful upload: yes
 ```
 
-Expected validated result after completion:
+Validated command:
+
+```bash
+sudo -u trx /opt/bots/trx/audits/audit_jr-bot-structure.sh   --instance trx   --path /opt/bots/trx
+```
+
+Validated OPSCON response pattern:
+
+```json
+{
+  "success": true,
+  "message": "JR-Bot structure audit stored successfully.",
+  "instance": "trx",
+  "mode": "target",
+  "audit_type": "audit_jr-bot-structure",
+  "expected_schema": "jrbot-structure-audit-v1",
+  "stored_file": "/data/audit_jr-bot-structure/trx/audit_jr-bot-structure-trx.json",
+  "history_file": "/data/audit_jr-bot-structure/trx/history/audit_jr-bot-structure-trx-YYYYMMDD_HHMMSS.json",
+  "token_scope": "instance",
+  "token_source": "header",
+  "received_at_utc": "YYYY-MM-DDTHH:MM:SSZ"
+}
+```
+
+Validated Structure summary:
 
 ```text
-bash syntax check successful
-upload successful without --push-url
-upload successful without --token
-default OPSCON endpoint used
-token loaded from local config/report_upload.token
-OPSCON accepted instance-scoped token
-OPSCON stored latest report
-OPSCON stored history report
-local pending file deleted after successful upload
-pending_count=0
+ok_basic_structure: true
+profile_detected: template
+deviation_count: 1
+boot_report_script_detected: true
+reboot_script_detected: true
 ```
 
----
+Resolved validation issue:
+
+```text
+BOOT_REPORT_SCRIPT_MISSING: resolved
+```
+
+Remaining warning:
+
+```text
+MAINTENANCE_DIR_MISSING
+```
+
+Interpretation:
+
+```text
+MAINTENANCE_DIR_MISSING is expected for the current TRX target layout because maintenance/ is legacy and operative scripts now live flat under scripts/.
+```
 
 ## 34. Repository Documentation Structure
 
@@ -1522,46 +1558,27 @@ If a legacy node has warnings, determine whether the warnings are expected migra
 
 ## 38. Recommended Future Development
 
-### Version 0.1.7
+### Version 0.2.1
 
 Possible improvements:
 
-- Move runtime script from `tools/` to `audits/`.
-- Normalize default output path to `{bot_path}/reports/pending/`.
-- Add default OPSCON endpoint.
-- Add token auto-discovery:
-  - `REPORT_UPLOAD_TOKEN`
-  - `{bot_path}/config/audit_structure.token`
-  - `{bot_path}/config/structure_upload.token`
-  - `{bot_path}/config/report_upload.token`
-- Add hardened curl upload through temporary curl config.
-- Add `X-OPSCON-INGEST-TOKEN` header upload.
-- Add curl timeouts:
-  - `connect-timeout = 10`
-  - `max-time = 60`.
-
-### Version 0.1.8
-
-Possible improvements:
-
+- Rename legacy/deviation messages so target-layout expected absences are not shown as warnings.
 - Add explicit target-layout readiness score.
 - Add more detailed systemd template validation.
 - Add expected owner/group checks.
 - Add executable-bit checks for all known scripts.
 - Add local latest-copy option under `reports/`.
+- Add optional compact `--agent-summary` output.
+- Add optional comparison mode with previous local report.
 
-### Version 0.2.0
+### Version 0.3.0
 
 Possible improvements:
 
-- Full One-Liner structure baseline validation.
-- Agent-readable compact summary block.
-- Comparison mode with previous local report.
-- Optional `--agent-summary` compact output.
-- Optional signed report metadata.
 - Stable machine-readable recommendation categories.
-
----
+- Optional signed report metadata.
+- Explicit public-vs-OPSCON runtime profile.
+- Optional dry-run validation for installer-generated layouts.
 
 ## 39. Public Repository Safety Rules
 
@@ -1613,7 +1630,7 @@ Recommended placeholders:
 {json_file}
 ```
 
-Never use real tokens in examples.
+Never use real tokens or real token hashes in examples.
 
 ---
 
@@ -1634,19 +1651,20 @@ secret-key presence without secret values
 Python runtime
 virtual environment
 systemd service/timer integration
-maintenance scripts
+audit script detection
+Boot Report audit detection
 storage basics
-legacy/hybrid/target profile state
-structure findings and recommendations
+legacy/hybrid/template/target profile state
+structure deviations and summary checks
 ```
 
-Current public runtime version reference:
+Current runtime version reference:
 
 ```text
-0.1.6
+0.2.0
 ```
 
-Current legacy runtime path:
+Legacy runtime path:
 
 ```text
 tools/audit_jr-bot-structure.sh
@@ -1696,7 +1714,15 @@ Healthy target local runtime path:
 /opt/bots/{instance}/audits/audit_jr-bot-structure.sh
 ```
 
-The Structure Audit still requires the same D7.6 runtime hardening and validation that has already been applied to Network Health.
+Validated TRX result:
+
+```text
+upload successful
+token_scope: instance
+token_source: header
+boot_report_script_detected: true
+pending_count: 0
+```
 
 This handbook belongs in GitHub:
 
