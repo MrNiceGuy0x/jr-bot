@@ -1,11 +1,12 @@
 # JR-Bot Network Health Audit Handbook
 
 **Status:** Active  
-**Handbook Version:** 1.1  
+**Handbook Version:** 1.2  
 **Runtime Script Version Reference:** 0.2.1  
 **Project:** JR-Bot / OPSCON  
 **Recommended Repository Path:** `docs/audits/audit_jr-bot-network-health.md`  
 **Related Runtime Script:** `audits/audit_jr-bot-network-health.sh`  
+**Legacy Runtime Script Path:** `tools/audit_jr-bot-network-health.sh`  
 **Expected JSON Schema:** `jrbot-network-health-audit-v1`  
 **Audit Type:** `audit_jr-bot-network-health`  
 **Last Updated:** 2026-06-27  
@@ -17,45 +18,46 @@
 1. [Purpose](#1-purpose)
 2. [Role in the JR-Bot / OPSCON System](#2-role-in-the-jr-bot--opscon-system)
 3. [Current Runtime Status](#3-current-runtime-status)
-4. [Security Principles](#4-security-principles)
-5. [Typical Usage](#5-typical-usage)
-6. [Parameters](#6-parameters)
-7. [Runtime Output Location](#7-runtime-output-location)
-8. [OPSCON Endpoint](#8-opscon-endpoint)
-9. [OPSCON Storage Structure](#9-opscon-storage-structure)
-10. [Instance-Scoped Token and Hash Security Model](#10-instance-scoped-token-and-hash-security-model)
-11. [Token Lookup Order](#11-token-lookup-order)
-12. [Default Upload Endpoint](#12-default-upload-endpoint)
-13. [D7.6 Runtime Upload Hardening](#13-d76-runtime-upload-hardening)
-14. [Expected Upload Payload](#14-expected-upload-payload)
-15. [Expected OPSCON Response](#15-expected-opscon-response)
-16. [JSON Root Structure](#16-json-root-structure)
-17. [JSON Block: `security`](#17-json-block-security)
-18. [JSON Block: `host`](#18-json-block-host)
-19. [JSON Block: `bot_context`](#19-json-block-bot_context)
-20. [JSON Block: `commands_available`](#20-json-block-commands_available)
-21. [JSON Block: `network`](#21-json-block-network)
-22. [JSON Block: `wifi`](#22-json-block-wifi)
-23. [JSON Block: `network_manager_cli`](#23-json-block-network_manager_cli)
-24. [JSON Block: `network_services`](#24-json-block-network_services)
-25. [JSON Block: `network_config_files`](#25-json-block-network_config_files)
-26. [JSON Block: `systemd_integrity`](#26-json-block-systemd_integrity)
-27. [JSON Block: `package_versions`](#27-json-block-package_versions)
-28. [JSON Block: `connectivity`](#28-json-block-connectivity)
-29. [JSON Block: `raw_reference_commands`](#29-json-block-raw_reference_commands)
-30. [JSON Block: `analysis`](#30-json-block-analysis)
-31. [Findings and Recommendations](#31-findings-and-recommendations)
-32. [Known Finding Codes](#32-known-finding-codes)
-33. [Target Network Baseline](#33-target-network-baseline)
-34. [Validated TRX Runtime State](#34-validated-trx-runtime-state)
-35. [Legacy Context: DMR and GGB](#35-legacy-context-dmr-and-ggb)
-36. [Repository Documentation Structure](#36-repository-documentation-structure)
-37. [Local Documentation for Future JR-Agents](#37-local-documentation-for-future-jr-agents)
-38. [Cleanup of Legacy OPSCON Structure](#38-cleanup-of-legacy-opscon-structure)
-39. [Recommended Interpretation for Agents](#39-recommended-interpretation-for-agents)
-40. [Recommended Future Development](#40-recommended-future-development)
-41. [Public Repository Safety Rules](#41-public-repository-safety-rules)
-42. [Short Agent Summary](#42-short-agent-summary)
+4. [Repository Path Migration: `tools/` to `audits/`](#4-repository-path-migration-tools-to-audits)
+5. [Security Principles](#5-security-principles)
+6. [Typical Usage](#6-typical-usage)
+7. [Parameters](#7-parameters)
+8. [Runtime Output Location](#8-runtime-output-location)
+9. [OPSCON Endpoint](#9-opscon-endpoint)
+10. [OPSCON Storage Structure](#10-opscon-storage-structure)
+11. [Instance-Scoped Token and Hash Security Model](#11-instance-scoped-token-and-hash-security-model)
+12. [Token Lookup Order](#12-token-lookup-order)
+13. [Default Upload Endpoint](#13-default-upload-endpoint)
+14. [D7.6 Runtime Upload Hardening](#14-d76-runtime-upload-hardening)
+15. [Expected Upload Payload](#15-expected-upload-payload)
+16. [Expected OPSCON Response](#16-expected-opscon-response)
+17. [JSON Root Structure](#17-json-root-structure)
+18. [JSON Block: `security`](#18-json-block-security)
+19. [JSON Block: `host`](#19-json-block-host)
+20. [JSON Block: `bot_context`](#20-json-block-bot_context)
+21. [JSON Block: `commands_available`](#21-json-block-commands_available)
+22. [JSON Block: `network`](#22-json-block-network)
+23. [JSON Block: `wifi`](#23-json-block-wifi)
+24. [JSON Block: `network_manager_cli`](#24-json-block-network_manager_cli)
+25. [JSON Block: `network_services`](#25-json-block-network_services)
+26. [JSON Block: `network_config_files`](#26-json-block-network_config_files)
+27. [JSON Block: `systemd_integrity`](#27-json-block-systemd_integrity)
+28. [JSON Block: `package_versions`](#28-json-block-package_versions)
+29. [JSON Block: `connectivity`](#29-json-block-connectivity)
+30. [JSON Block: `raw_reference_commands`](#30-json-block-raw_reference_commands)
+31. [JSON Block: `analysis`](#31-json-block-analysis)
+32. [Findings and Recommendations](#32-findings-and-recommendations)
+33. [Known Finding Codes](#33-known-finding-codes)
+34. [Target Network Baseline](#34-target-network-baseline)
+35. [Validated TRX Runtime State](#35-validated-trx-runtime-state)
+36. [Legacy Context: DMR and GGB](#36-legacy-context-dmr-and-ggb)
+37. [Repository Documentation Structure](#37-repository-documentation-structure)
+38. [Local Documentation for Future JR-Agents](#38-local-documentation-for-future-jr-agents)
+39. [Cleanup of Legacy OPSCON Structure](#39-cleanup-of-legacy-opscon-structure)
+40. [Recommended Interpretation for Agents](#40-recommended-interpretation-for-agents)
+41. [Recommended Future Development](#41-recommended-future-development)
+42. [Public Repository Safety Rules](#42-public-repository-safety-rules)
+43. [Short Agent Summary](#43-short-agent-summary)
 
 ---
 
@@ -125,16 +127,24 @@ The current runtime script version covered by this handbook is:
 0.2.1
 ```
 
-The runtime script path in the repository is:
+The intended runtime script path in the repository is:
 
 ```text
 audits/audit_jr-bot-network-health.sh
 ```
 
+The current public `main` branch may still contain a legacy copy under:
+
+```text
+tools/audit_jr-bot-network-health.sh
+```
+
+That `tools/` file is legacy and must be migrated or replaced by the current `audits/` runtime version.
+
 The runtime script path on a target One-Liner bot is:
 
 ```text
-/opt/bots/<instance>/audits/audit_jr-bot-network-health.sh
+/opt/bots/{instance}/audits/audit_jr-bot-network-health.sh
 ```
 
 Example for TRX:
@@ -175,7 +185,7 @@ Runtime version `0.2.1` includes D7.6 upload hardening:
   - `connect-timeout = 10`
   - `max-time = 60`
 
-Recommended repository verification:
+Recommended repository verification after migration:
 
 ```bash
 grep 'SCRIPT_VERSION=' audits/audit_jr-bot-network-health.sh
@@ -193,7 +203,49 @@ SCRIPT_VERSION="0.2.1"
 
 ---
 
-## 4. Security Principles
+## 4. Repository Path Migration: `tools/` to `audits/`
+
+The current target repository layout uses `audits/` for audit scripts.
+
+Correct target path:
+
+```text
+audits/audit_jr-bot-network-health.sh
+```
+
+Legacy path still visible on the public `main` branch:
+
+```text
+tools/audit_jr-bot-network-health.sh
+```
+
+The `tools/` file is an older legacy copy and should not be treated as the final runtime source.
+
+Required cleanup options:
+
+1. Move the current hardened script into `audits/audit_jr-bot-network-health.sh`.
+2. Remove the legacy `tools/audit_jr-bot-network-health.sh` file.
+3. Update all docs, installer references and runtime install logic to use `audits/`.
+
+Recommended Git commands for the repository cleanup:
+
+```bash
+git mkdir -p audits 2>/dev/null || true
+git mv tools/audit_jr-bot-network-health.sh audits/audit_jr-bot-network-health.sh
+```
+
+If `audits/audit_jr-bot-network-health.sh` already exists locally with the correct D7.6 version, remove the legacy file instead:
+
+```bash
+git rm tools/audit_jr-bot-network-health.sh
+git add audits/audit_jr-bot-network-health.sh
+```
+
+After cleanup, `main` should no longer expose the Network Health audit as the primary runtime script under `tools/`.
+
+---
+
+## 5. Security Principles
 
 The script is read-only by design.
 
@@ -247,16 +299,16 @@ The OPSCON ingest endpoint should reject reports where these security flags do n
 
 ---
 
-## 5. Typical Usage
+## 6. Typical Usage
 
 ### Target Layout Audit Without Explicit Upload Parameters
 
 Runtime version `0.2.1` supports unattended upload without explicitly passing `--push-url` or `--token`, as long as a valid local token file exists.
 
 ```bash
-/opt/bots/<instance>/audits/audit_jr-bot-network-health.sh \
-  --instance <instance> \
-  --path /opt/bots/<instance>
+/opt/bots/{instance}/audits/audit_jr-bot-network-health.sh \
+  --instance {instance} \
+  --path /opt/bots/{instance}
 ```
 
 Example for TRX:
@@ -321,7 +373,7 @@ For manual debugging only, the endpoint and token can still be overridden:
   --instance trx \
   --path /opt/bots/trx \
   --push-url https://opscon.blenk.co.at/api/jrbot_audit_network_health_ingest.php \
-  --token <ORIGINAL_UPLOAD_TOKEN>
+  --token {ORIGINAL_UPLOAD_TOKEN}
 ```
 
 The original token must never be committed to GitHub.
@@ -340,35 +392,35 @@ When `--output` is used, the output file is kept after upload.
 
 ---
 
-## 6. Parameters
+## 7. Parameters
 
 | Parameter | Required | Description |
 |---|---:|---|
-| `--instance <name>` | Yes | Bot instance name, for example `dmr`, `ggb`, `trx`. |
-| `--path <bot-path>` | Yes | Bot installation path. |
+| `--instance {name}` | Yes | Bot instance name, for example `dmr`, `ggb`, `trx`. |
+| `--path {bot_path}` | Yes | Bot installation path. |
 | `--legacy` | No | Marks the audit as legacy-context. Used for older DMR/GGB structures. |
-| `--push-url <url>` | No | OPSCON network health ingest endpoint override. |
-| `--token <token>` | No | Original upload token for manual debugging. |
-| `--output <file>` | No | Local JSON output path. File will be kept. |
+| `--push-url {url}` | No | OPSCON network health ingest endpoint override. |
+| `--token {token}` | No | Original upload token for manual debugging. |
+| `--output {file}` | No | Local JSON output path. File will be kept. |
 | `--keep-local` | No | Keep generated local JSON after successful upload. |
 | `--print-json` | No | Print full JSON to stdout. |
 | `--print-summary` | No | Print compact summary of findings and recommendations. |
-| `--test-url <url>` | No | Optional HTTPS URL to test. |
-| `--gateway <ip>` | No | Optional gateway override. |
-| `--wifi-iface <iface>` | No | Wi-Fi interface. Default: `wlan0`. |
-| `--eth-iface <iface>` | No | Ethernet interface. Default: `eth0`. |
+| `--test-url {url}` | No | Optional HTTPS URL to test. |
+| `--gateway {ip}` | No | Optional gateway override. |
+| `--wifi-iface {iface}` | No | Wi-Fi interface. Default: `wlan0`. |
+| `--eth-iface {iface}` | No | Ethernet interface. Default: `eth0`. |
 | `-h`, `--help` | No | Show help. |
 
 ---
 
-## 7. Runtime Output Location
+## 8. Runtime Output Location
 
 The script writes the JSON file locally first.
 
 Default local pending output:
 
 ```text
-<bot-path>/reports/pending/audit_jr-bot-network-health-<instance>-YYYYMMDD_HHMMSS.json
+{bot_path}/reports/pending/audit_jr-bot-network-health-{instance}-YYYYMMDD_HHMMSS.json
 ```
 
 Example:
@@ -381,14 +433,14 @@ After a successful upload, the local temporary report is deleted unless one of t
 
 ```text
 --keep-local
---output <file>
+--output {file}
 ```
 
 If upload fails, the local report remains available for retry or debugging.
 
 ---
 
-## 8. OPSCON Endpoint
+## 9. OPSCON Endpoint
 
 Current endpoint:
 
@@ -424,7 +476,7 @@ The current endpoint must use the instance-scoped ingest-token contract describe
 
 ---
 
-## 9. OPSCON Storage Structure
+## 10. OPSCON Storage Structure
 
 Current required structure:
 
@@ -456,18 +508,16 @@ Current required structure:
             └── audit_jr-bot-network-health-trx-YYYYMMDD_HHMMSS.json
 ```
 
-Important:
+This is not the current valid model:
 
 ```text
 /OPSCON/data/audit_jr-bot-network-health/_security/ingest_token_sha256
 ```
 
-is not the current valid model.
-
 The valid model is instance-specific:
 
 ```text
-/OPSCON/data/audit_jr-bot-network-health/<instance>/_security/ingest_token_sha256
+/OPSCON/data/audit_jr-bot-network-health/{instance}/_security/ingest_token_sha256
 ```
 
 ### What the Public Ingest Endpoint May Create
@@ -475,7 +525,7 @@ The valid model is instance-specific:
 After successful authentication and validation, the public ingest endpoint may create runtime storage folders such as:
 
 ```text
-/OPSCON/data/audit_jr-bot-network-health/<instance>/history/
+/OPSCON/data/audit_jr-bot-network-health/{instance}/history/
 ```
 
 ### What the Public Ingest Endpoint Must Not Create
@@ -483,22 +533,22 @@ After successful authentication and validation, the public ingest endpoint may c
 The public ingest endpoint must not create:
 
 ```text
-/OPSCON/data/audit_jr-bot-network-health/<instance>/_security/
-/OPSCON/data/audit_jr-bot-network-health/<instance>/_security/ingest_token_sha256
+/OPSCON/data/audit_jr-bot-network-health/{instance}/_security/
+/OPSCON/data/audit_jr-bot-network-health/{instance}/_security/ingest_token_sha256
 ```
 
 These security assets must be provisioned by a trusted server-side onboarding process, OPSCON admin UI, or manual server-side setup.
 
 ---
 
-## 10. Instance-Scoped Token and Hash Security Model
+## 11. Instance-Scoped Token and Hash Security Model
 
 The current endpoint does not store the original token in PHP.
 
 Instead, it reads a SHA256 hash from the instance-specific security path:
 
 ```text
-/OPSCON/data/audit_jr-bot-network-health/<instance>/_security/ingest_token_sha256
+/OPSCON/data/audit_jr-bot-network-health/{instance}/_security/ingest_token_sha256
 ```
 
 Example for TRX:
@@ -510,7 +560,7 @@ Example for TRX:
 Example hash-file content:
 
 ```text
-9bdfb23776a56168e8cec2f98b6a28a323b80968ff20fd1851ee5c1e330667b6
+{sha256(ORIGINAL_UPLOAD_TOKEN)}
 ```
 
 Important:
@@ -541,7 +591,7 @@ The ingest endpoint must process uploads in this order:
 4. Resolve instance directory.
 5. Read instance-specific hash file:
    ```text
-   /OPSCON/data/audit_jr-bot-network-health/<instance>/_security/ingest_token_sha256
+   /OPSCON/data/audit_jr-bot-network-health/{instance}/_security/ingest_token_sha256
    ```
 6. Read token from header or request.
 7. Compare `sha256(token)` against stored hash using constant-time comparison.
@@ -595,7 +645,7 @@ trx/test
 
 ---
 
-## 11. Token Lookup Order
+## 12. Token Lookup Order
 
 Network Health runtime version `0.2.1` supports automatic token lookup.
 
@@ -603,9 +653,9 @@ Lookup order:
 
 ```text
 REPORT_UPLOAD_TOKEN
-<bot-path>/config/audit_network_health.token
-<bot-path>/config/network_health_upload.token
-<bot-path>/config/report_upload.token
+{bot_path}/config/audit_network_health.token
+{bot_path}/config/network_health_upload.token
+{bot_path}/config/report_upload.token
 ```
 
 Example TRX fallback file:
@@ -621,8 +671,8 @@ The token file must not be committed to the public repository.
 Recommended file permissions on the bot host:
 
 ```bash
-sudo chown <instance>:<instance> /opt/bots/<instance>/config/report_upload.token
-sudo chmod 600 /opt/bots/<instance>/config/report_upload.token
+sudo chown {instance}:{instance} /opt/bots/{instance}/config/report_upload.token
+sudo chmod 600 /opt/bots/{instance}/config/report_upload.token
 ```
 
 Example for TRX:
@@ -634,7 +684,7 @@ sudo chmod 600 /opt/bots/trx/config/report_upload.token
 
 ---
 
-## 12. Default Upload Endpoint
+## 13. Default Upload Endpoint
 
 Network Health runtime version `0.2.1` has a default OPSCON endpoint:
 
@@ -651,7 +701,7 @@ NETWORK_HEALTH_AUDIT_PUSH_URL
 or CLI argument:
 
 ```bash
---push-url <url>
+--push-url {url}
 ```
 
 For normal runtime operation, the default endpoint should be used.
@@ -660,7 +710,7 @@ Manual `--push-url` should be reserved for debugging, staging, or endpoint migra
 
 ---
 
-## 13. D7.6 Runtime Upload Hardening
+## 14. D7.6 Runtime Upload Hardening
 
 Runtime version `0.2.1` hardened the upload behavior.
 
@@ -675,13 +725,13 @@ This could temporarily expose the cleartext token through local process inspecti
 ```text
 ps aux
 systemctl status
-/proc/<pid>/cmdline
+/proc/{pid}/cmdline
 ```
 
 ### Current Hardened Runtime Pattern
 
 ```text
-curl --config <temporary-curl-config>
+curl --config {temporary_curl_config}
 ```
 
 The temporary curl config file must be:
@@ -696,7 +746,7 @@ removed immediately after the curl call
 The ingest token is sent as an HTTP header:
 
 ```text
-X-OPSCON-INGEST-TOKEN: <token>
+X-OPSCON-INGEST-TOKEN: {token}
 ```
 
 The OPSCON ingest endpoint must accept this header.
@@ -719,7 +769,7 @@ D7.6 significantly reduces local token exposure, but it does not make leaks impo
 Remaining sensitive assets:
 
 ```text
-/opt/bots/<instance>/config/report_upload.token
+/opt/bots/{instance}/config/report_upload.token
 temporary curl config file during active upload
 OPSCON server-side _security/ingest_token_sha256
 server logs, if misconfigured
@@ -728,33 +778,33 @@ old Git history, if secrets were ever committed
 
 ---
 
-## 14. Expected Upload Payload
+## 15. Expected Upload Payload
 
 The runtime upload sends the following form fields:
 
 ```text
-instance=<instance>
-mode=<mode>
-audit_file=@<json-file>;type=application/json
+instance={instance}
+mode={mode}
+audit_file=@{json_file};type=application/json
 ```
 
 The token is sent through:
 
 ```text
-X-OPSCON-INGEST-TOKEN: <token>
+X-OPSCON-INGEST-TOKEN: {token}
 ```
 
 The old multipart token field is deprecated for runtime usage:
 
 ```text
-token=<token>
+token={token}
 ```
 
 The OPSCON endpoint may keep backward-compatible support for the multipart token field during migration, but the runtime script should use the header-based model.
 
 ---
 
-## 15. Expected OPSCON Response
+## 16. Expected OPSCON Response
 
 Successful OPSCON response example:
 
@@ -788,7 +838,7 @@ Important response fields:
 
 ---
 
-## 16. JSON Root Structure
+## 17. JSON Root Structure
 
 The script generates JSON with this high-level structure:
 
@@ -822,7 +872,7 @@ It is added by the OPSCON ingest endpoint after successful upload.
 
 ---
 
-## 17. JSON Block: `security`
+## 18. JSON Block: `security`
 
 The `security` block documents that the report is safe to store and inspect.
 
@@ -850,7 +900,7 @@ The OPSCON ingest endpoint should reject reports that do not match this safety c
 
 ---
 
-## 18. JSON Block: `host`
+## 19. JSON Block: `host`
 
 The `host` block describes the host system.
 
@@ -883,7 +933,7 @@ The `boot_time` is important when checking whether an audit was produced before 
 
 ---
 
-## 19. JSON Block: `bot_context`
+## 20. JSON Block: `bot_context`
 
 The `bot_context` block connects the network report to the bot installation.
 
@@ -909,7 +959,7 @@ This block helps agents understand whether the audit was run against the intende
 
 ---
 
-## 20. JSON Block: `commands_available`
+## 21. JSON Block: `commands_available`
 
 The `commands_available` block lists whether required diagnostic commands exist.
 
@@ -955,7 +1005,7 @@ Important commands:
 
 ---
 
-## 21. JSON Block: `network`
+## 22. JSON Block: `network`
 
 The `network` block is one of the most important blocks.
 
@@ -1012,7 +1062,7 @@ Example:
 
 ---
 
-## 22. JSON Block: `wifi`
+## 23. JSON Block: `wifi`
 
 The `wifi` block contains Wi-Fi-specific diagnostics.
 
@@ -1074,7 +1124,7 @@ Gateway: 192.168.178.1
 
 ---
 
-## 23. JSON Block: `network_manager_cli`
+## 24. JSON Block: `network_manager_cli`
 
 This block checks `nmcli`, if available.
 
@@ -1114,7 +1164,7 @@ NetworkManager.service disabled
 
 ---
 
-## 24. JSON Block: `network_services`
+## 25. JSON Block: `network_services`
 
 The `network_services` block collects systemd service information for relevant services.
 
@@ -1166,7 +1216,7 @@ networking.service             not-found / unused
 
 ---
 
-## 25. JSON Block: `network_config_files`
+## 26. JSON Block: `network_config_files`
 
 The `network_config_files` block reads sanitized network configuration files.
 
@@ -1215,7 +1265,7 @@ The script should not require root just to read Wi-Fi secrets.
 
 ---
 
-## 26. JSON Block: `systemd_integrity`
+## 27. JSON Block: `systemd_integrity`
 
 The `systemd_integrity` block checks whether `systemd-networkd` and its shared libraries resolve correctly.
 
@@ -1258,7 +1308,7 @@ If missing libraries are detected, the finding `MISSING_SHARED_LIBRARY` becomes 
 
 ---
 
-## 27. JSON Block: `package_versions`
+## 28. JSON Block: `package_versions`
 
 The `package_versions` block checks relevant package versions using `dpkg-query`.
 
@@ -1293,7 +1343,7 @@ This helps compare package state across DMR, GGB and TRX.
 
 ---
 
-## 28. JSON Block: `connectivity`
+## 29. JSON Block: `connectivity`
 
 The `connectivity` block performs practical network checks.
 
@@ -1335,7 +1385,7 @@ https_test.returncode = 0
 
 ---
 
-## 29. JSON Block: `raw_reference_commands`
+## 30. JSON Block: `raw_reference_commands`
 
 This block stores additional diagnostic command outputs.
 
@@ -1359,7 +1409,7 @@ It is especially useful when:
 
 ---
 
-## 30. JSON Block: `analysis`
+## 31. JSON Block: `analysis`
 
 The `analysis` block contains the high-level interpretation.
 
@@ -1393,7 +1443,7 @@ ok findings do not make health_state warning
 
 ---
 
-## 31. Findings and Recommendations
+## 32. Findings and Recommendations
 
 The script creates findings and recommendations in the `analysis` block.
 
@@ -1441,7 +1491,7 @@ These are expected in a systemd-networkd-based JR-Bot network stack.
 
 ---
 
-## 32. Known Finding Codes
+## 33. Known Finding Codes
 
 | Code | Level | Meaning |
 |---|---|---|
@@ -1460,7 +1510,7 @@ These are expected in a systemd-networkd-based JR-Bot network stack.
 
 ---
 
-## 33. Target Network Baseline
+## 34. Target Network Baseline
 
 The preferred JR-Bot network baseline is:
 
@@ -1515,7 +1565,7 @@ TRX → https://trax.blenk.co.at
 
 ---
 
-## 34. Validated TRX Runtime State
+## 35. Validated TRX Runtime State
 
 D7.6 was validated on the TRX Pi.
 
@@ -1556,7 +1606,7 @@ token_scope=instance
 
 ---
 
-## 35. Legacy Context: DMR and GGB
+## 36. Legacy Context: DMR and GGB
 
 DMR and GGB may still use legacy or hybrid paths during migration.
 
@@ -1570,7 +1620,7 @@ Known legacy paths:
 Expected One-Liner target path pattern:
 
 ```text
-/opt/bots/<instance>
+/opt/bots/{instance}
 ```
 
 ### DMR Context
@@ -1624,9 +1674,9 @@ For the future target state, `disabled` is preferred over `masked`.
 
 ---
 
-## 36. Repository Documentation Structure
+## 37. Repository Documentation Structure
 
-Recommended GitHub repository structure:
+Recommended target GitHub repository structure:
 
 ```text
 jr-bot/
@@ -1657,16 +1707,18 @@ This handbook belongs in the repository at:
 docs/audits/audit_jr-bot-network-health.md
 ```
 
+The legacy `tools/` directory should not remain the canonical location for audit runtime scripts.
+
 ---
 
-## 37. Local Documentation for Future JR-Agents
+## 38. Local Documentation for Future JR-Agents
 
 If a future JR-Agent runs locally on a bot, it should be able to read this handbook locally.
 
 Recommended local structure:
 
 ```text
-/opt/bots/<instance>/docs/audits/
+/opt/bots/{instance}/docs/audits/
 ├── audit-ingest-contract.md
 ├── audit_jr-bot-boot-report.md
 ├── audit_jr-bot-network-health.md
@@ -1683,7 +1735,7 @@ For legacy bots:
 Recommended local audits:
 
 ```text
-/opt/bots/<instance>/audits/
+/opt/bots/{instance}/audits/
 ├── audit_jr-bot-boot-report.sh
 ├── audit_jr-bot-network-health.sh
 └── audit_jr-bot-structure.sh
@@ -1692,18 +1744,18 @@ Recommended local audits:
 Recommended local reports:
 
 ```text
-/opt/bots/<instance>/reports/pending/
+/opt/bots/{instance}/reports/pending/
 ```
 
 Recommended config token location:
 
 ```text
-/opt/bots/<instance>/config/report_upload.token
+/opt/bots/{instance}/config/report_upload.token
 ```
 
 ---
 
-## 38. Cleanup of Legacy OPSCON Structure
+## 39. Cleanup of Legacy OPSCON Structure
 
 After DMR, GGB and TRX jobs have been moved to the new endpoint, the old endpoint and old data folder can be removed or archived.
 
@@ -1758,7 +1810,7 @@ Permanent deletion should happen only after a successful control period.
 
 ---
 
-## 39. Recommended Interpretation for Agents
+## 40. Recommended Interpretation for Agents
 
 Agents must not interpret every finding as a failure.
 
@@ -1811,7 +1863,7 @@ If a node still fails after power loss despite `health_state: ok`, investigate:
 
 ---
 
-## 40. Recommended Future Development
+## 41. Recommended Future Development
 
 ### Version 0.2.2
 
@@ -1853,7 +1905,7 @@ Possible improvements:
 
 ---
 
-## 41. Public Repository Safety Rules
+## 42. Public Repository Safety Rules
 
 The public repository must never contain:
 
@@ -1874,13 +1926,13 @@ Token hashes belong only in the OPSCON server-side instance `_security` director
 Correct server-side hash location:
 
 ```text
-/OPSCON/data/audit_jr-bot-network-health/<instance>/_security/ingest_token_sha256
+/OPSCON/data/audit_jr-bot-network-health/{instance}/_security/ingest_token_sha256
 ```
 
 Correct bot-side token fallback location:
 
 ```text
-/opt/bots/<instance>/config/report_upload.token
+/opt/bots/{instance}/config/report_upload.token
 ```
 
 The public repository may contain:
@@ -1896,17 +1948,17 @@ placeholder token names
 Recommended placeholders:
 
 ```text
-<ORIGINAL_UPLOAD_TOKEN>
-<sha256(ORIGINAL_UPLOAD_TOKEN)>
-<instance>
-<bot-path>
+{ORIGINAL_UPLOAD_TOKEN}
+{sha256(ORIGINAL_UPLOAD_TOKEN)}
+{instance}
+{bot_path}
 ```
 
 Never use real tokens in examples.
 
 ---
 
-## 42. Short Agent Summary
+## 43. Short Agent Summary
 
 `audit_jr-bot-network-health.sh` is the main network diagnostic tool for JR-Bot nodes.
 
@@ -1937,10 +1989,16 @@ Current runtime version:
 0.2.1
 ```
 
-Current runtime path:
+Current target runtime path:
 
 ```text
 audits/audit_jr-bot-network-health.sh
+```
+
+Legacy runtime path still visible on current public `main` until repository cleanup:
+
+```text
+tools/audit_jr-bot-network-health.sh
 ```
 
 Current schema:
@@ -1958,13 +2016,13 @@ https://opscon.blenk.co.at/api/jrbot_audit_network_health_ingest.php
 Current OPSCON storage path:
 
 ```text
-/OPSCON/data/audit_jr-bot-network-health/<instance>/
+/OPSCON/data/audit_jr-bot-network-health/{instance}/
 ```
 
 Current instance-scoped token-hash path:
 
 ```text
-/OPSCON/data/audit_jr-bot-network-health/<instance>/_security/ingest_token_sha256
+/OPSCON/data/audit_jr-bot-network-health/{instance}/_security/ingest_token_sha256
 ```
 
 Healthy current assignments:
@@ -1988,7 +2046,7 @@ dhcpcd.service                 unused / not-found
 Since runtime version `0.2.1`, normal upload no longer requires explicit `--push-url` or `--token` if the bot has a valid local token file:
 
 ```text
-/opt/bots/<instance>/config/report_upload.token
+/opt/bots/{instance}/config/report_upload.token
 ```
 
 The token is sent via:
@@ -2008,5 +2066,5 @@ docs/audits/audit_jr-bot-network-health.md
 Later it should also exist locally on each bot:
 
 ```text
-/opt/bots/<instance>/docs/audits/audit_jr-bot-network-health.md
+/opt/bots/{instance}/docs/audits/audit_jr-bot-network-health.md
 ```
