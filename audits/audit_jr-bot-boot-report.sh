@@ -47,7 +47,7 @@ set -euo pipefail
 #
 # ==========================================================
 
-SCRIPT_VERSION="0.2.1"
+SCRIPT_VERSION="0.2.2"
 SCHEMA_VERSION="jrbot-boot-report-audit-v1"
 
 # ----------------------------------------------------------
@@ -358,19 +358,30 @@ upload_one_report() {
 
     local response_file
     response_file="$(mktemp /tmp/jrbot-boot-report-upload-response.XXXXXX.txt)"
+    curl_config="$(mktemp /tmp/jrbot-boot-report-curl.XXXXXX.conf)"
+    chmod 600 "$response_file" "$curl_config" 2>/dev/null || true
 
     info "Sende Boot-Report-Audit an OPSCON: $(basename "$file")"
 
-    local http_code
-    http_code="$(curl -fsSL \
-        -w "%{http_code}" \
-        -o "$response_file" \
-        -X POST \
-        -F "token=${TOKEN}" \
-        -F "instance=${INSTANCE}" \
-        -F "mode=${MODE_REQUESTED}" \
-        -F "audit_file=@${file};type=application/json" \
-        "$PUSH_URL" || true)"
+    cat > "$curl_config" <<EOF
+fail
+show-error
+silent
+location
+connect-timeout = 10
+max-time = 60
+request = "POST"
+output = "$response_file"
+write-out = "%{http_code}"
+header = "X-OPSCON-INGEST-TOKEN: ${TOKEN}"
+form = "instance=${INSTANCE}"
+form = "mode=${MODE_REQUESTED}"
+form = "audit_file=@${file};type=application/json"
+url = "${PUSH_URL}"
+EOF
+
+    http_code="$(curl --config "$curl_config" || true)"
+    rm -f "$curl_config"
 
     if [[ "$http_code" != "200" ]]; then
         warn "Upload fehlgeschlagen für $(basename "$file"). HTTP-Code: ${http_code}"
@@ -380,7 +391,7 @@ upload_one_report() {
             echo >&2
         fi
 
-        rm -f "$response_file"
+        rm -f "$response_file" "$curl_config" 2>/dev/null || true
         return 1
     fi
 
@@ -391,7 +402,7 @@ upload_one_report() {
         echo >&2
     fi
 
-    rm -f "$response_file"
+    rm -f "$response_file" "$curl_config" 2>/dev/null || true
 
     if [[ "$KEEP_LOCAL" == "true" ]]; then
         info "Lokaler Report bleibt erhalten wegen --keep-local: $file"

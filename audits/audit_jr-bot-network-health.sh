@@ -90,14 +90,14 @@ set -euo pipefail
 #
 # ==========================================================
 
-SCRIPT_VERSION="0.2.0"
+SCRIPT_VERSION="0.2.1"
 SCHEMA_VERSION="jrbot-network-health-audit-v1"
 
 INSTANCE=""
 INSTALL_PATH=""
 MODE="target"
-PUSH_URL=""
-TOKEN=""
+PUSH_URL="${NETWORK_HEALTH_AUDIT_PUSH_URL:-https://opscon.blenk.co.at/api/jrbot_audit_network_health_ingest.php}"
+TOKEN="${REPORT_UPLOAD_TOKEN:-}"
 OUTPUT_FILE=""
 OUTPUT_FILE_USER_SET="false"
 PRINT_JSON="false"
@@ -185,6 +185,21 @@ if [[ "$INSTALL_PATH" == "~/"* ]]; then
 fi
 
 REPORTS_PENDING_DIR="${INSTALL_PATH}/reports/pending"
+
+# Optional token file support.
+# Priority:
+#   1) <bot-path>/config/audit_network_health.token
+#   2) <bot-path>/config/network_health_upload.token
+#   3) <bot-path>/config/report_upload.token       # shared audit fallback
+for token_file in \
+    "$INSTALL_PATH/config/audit_network_health.token" \
+    "$INSTALL_PATH/config/network_health_upload.token" \
+    "$INSTALL_PATH/config/report_upload.token"
+do
+    if [[ -z "$TOKEN" && -s "$token_file" ]]; then
+        TOKEN="$(tr -d '[:space:]' < "$token_file" || true)"
+    fi
+done
 
 INSTANCE_LOWER="$(echo "$INSTANCE" | tr '[:upper:]' '[:lower:]')"
 
@@ -1064,10 +1079,30 @@ if [[ -n "$PUSH_URL" ]]; then
     fi
 
     RESPONSE_FILE="$(mktemp /tmp/audit_jr-bot-network-health-upload-response.XXXXXX.txt)"
+    CURL_CONFIG="$(mktemp /tmp/audit_jr-bot-network-health-curl.XXXXXX.conf)"
+    chmod 600 "$RESPONSE_FILE" "$CURL_CONFIG" 2>/dev/null || true
 
     info "Sende Network-Health-Audit JSON an OPSCON als Datei-Upload..."
 
-    HTTP_CODE="$(curl -fsSL         -w "%{http_code}"         -o "$RESPONSE_FILE"         -X POST         -F "token=${TOKEN}"         -F "instance=${INSTANCE_LOWER}"         -F "mode=${MODE}"         -F "audit_file=@${OUTPUT_FILE};type=application/json"         "$PUSH_URL" || true)"
+    cat > "$CURL_CONFIG" <<EOF
+fail
+show-error
+silent
+location
+connect-timeout = 10
+max-time = 60
+request = "POST"
+output = "$RESPONSE_FILE"
+write-out = "%{http_code}"
+header = "X-OPSCON-INGEST-TOKEN: ${TOKEN}"
+form = "instance=${INSTANCE_LOWER}"
+form = "mode=${MODE}"
+form = "audit_file=@${OUTPUT_FILE};type=application/json"
+url = "${PUSH_URL}"
+EOF
+
+    HTTP_CODE="$(curl --config "$CURL_CONFIG" || true)"
+    rm -f "$CURL_CONFIG"
 
     if [[ "$HTTP_CODE" != "200" ]]; then
         error "Upload fehlgeschlagen. HTTP-Code: ${HTTP_CODE}"
@@ -1075,7 +1110,7 @@ if [[ -n "$PUSH_URL" ]]; then
             cat "$RESPONSE_FILE" >&2
             echo >&2
         fi
-        rm -f "$RESPONSE_FILE"
+        rm -f "$RESPONSE_FILE" "$CURL_CONFIG" 2>/dev/null || true
         warn "Lokale Network-Health-Audit-Datei bleibt fÃ¼r Debugging erhalten: ${OUTPUT_FILE}"
         exit 1
     fi
@@ -1088,7 +1123,7 @@ if [[ -n "$PUSH_URL" ]]; then
         echo >&2
     fi
 
-    rm -f "$RESPONSE_FILE"
+    rm -f "$RESPONSE_FILE" "$CURL_CONFIG" 2>/dev/null || true
 fi
 
 if [[ "$UPLOAD_SUCCESS" == "true" ]]; then
