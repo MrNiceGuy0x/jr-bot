@@ -94,7 +94,7 @@ It creates a JSON report under the bot's pending report directory and then attem
 The Boot Report Audit complements the Structure and Network Health audits.
 
 | Script | Primary Purpose |
-|---|---|
+|--|--|
 | `audits/audit_jr-bot-boot-report.sh` | Captures the early post-boot state and uploads pending boot reports. |
 | `audits/audit_jr-bot-network-health.sh` | Performs deep network diagnostics, routes, DNS, WLAN and service analysis. |
 | `audits/audit_jr-bot-structure.sh` | Audits bot layout, files, Python, systemd and runtime structure. |
@@ -391,7 +391,7 @@ The original token must never be committed to GitHub.
 ## 7. Parameters
 
 | Parameter | Required | Description |
-|---|---:|---|
+|--|--:|--|
 | `--instance {name}` | No if detectable | Bot instance name, for example `dmr`, `ggb`, `trx`. |
 | `--path {bot_path}` | No if detectable | Bot installation path. |
 | `--legacy` | No | Compatibility shortcut. Current runtime maps this to auto-detection. |
@@ -517,30 +517,30 @@ Current required structure:
 
 ```text
 /OPSCON/data/
-â””â”€â”€ audit_jr-bot-boot-report/
-    â”œâ”€â”€ dmr/
-    â”‚   â”œâ”€â”€ _security/
-    â”‚   â”‚   â”œâ”€â”€ .htaccess
-    â”‚   â”‚   â””â”€â”€ ingest_token_sha256
-    â”‚   â”œâ”€â”€ audit_jr-bot-boot-report-dmr.json
-    â”‚   â””â”€â”€ history/
-    â”‚       â””â”€â”€ audit_jr-bot-boot-report-dmr-YYYYMMDD_HHMMSS.json
-    â”‚
-    â”œâ”€â”€ ggb/
-    â”‚   â”œâ”€â”€ _security/
-    â”‚   â”‚   â”œâ”€â”€ .htaccess
-    â”‚   â”‚   â””â”€â”€ ingest_token_sha256
-    â”‚   â”œâ”€â”€ audit_jr-bot-boot-report-ggb.json
-    â”‚   â””â”€â”€ history/
-    â”‚       â””â”€â”€ audit_jr-bot-boot-report-ggb-YYYYMMDD_HHMMSS.json
-    â”‚
-    â””â”€â”€ trx/
-        â”œâ”€â”€ _security/
-        â”‚   â”œâ”€â”€ .htaccess
-        â”‚   â””â”€â”€ ingest_token_sha256
-        â”œâ”€â”€ audit_jr-bot-boot-report-trx.json
-        â””â”€â”€ history/
-            â””â”€â”€ audit_jr-bot-boot-report-trx-YYYYMMDD_HHMMSS.json
+`-- audit_jr-bot-boot-report/
+    |-- dmr/
+    |   |-- _security/
+    |   |   |-- .htaccess
+    |   |   `-- ingest_token_sha256
+    |   |-- audit_jr-bot-boot-report-dmr.json
+    |   `-- history/
+    |       `-- audit_jr-bot-boot-report-dmr-YYYYMMDD_HHMMSS.json
+    |
+    |-- ggb/
+    |   |-- _security/
+    |   |   |-- .htaccess
+    |   |   `-- ingest_token_sha256
+    |   |-- audit_jr-bot-boot-report-ggb.json
+    |   `-- history/
+    |       `-- audit_jr-bot-boot-report-ggb-YYYYMMDD_HHMMSS.json
+    |
+    `-- trx/
+        |-- _security/
+        |   |-- .htaccess
+        |   `-- ingest_token_sha256
+        |-- audit_jr-bot-boot-report-trx.json
+        `-- history/
+            `-- audit_jr-bot-boot-report-trx-YYYYMMDD_HHMMSS.json
 ```
 
 This is not the current valid model:
@@ -876,7 +876,7 @@ Successful OPSCON response example:
 Important response fields:
 
 | Field | Meaning |
-|---|---|
+|--|--|
 | `success` | Upload result. |
 | `instance` | Accepted instance name. |
 | `audit_type` | Must be `audit_jr-bot-boot-report`. |
@@ -955,7 +955,7 @@ Example:
 Interpretation:
 
 | Field | Expected | Meaning |
-|---|---:|---|
+|--|--:|--|
 | `read_only` | `true` | The script made no changes. |
 | `secrets_redacted` | `true` | Secret-looking values were redacted. |
 | `secret_values_included` | `false` | Secret values are not included. |
@@ -1189,7 +1189,7 @@ For deeper diagnostics, inspect the detailed `network`, `services` and `journals
 Possible `health_state` values:
 
 | Value | Meaning |
-|---|---|
+|--|--|
 | `ok` | Required boot/network checks passed. |
 | `warning` | At least one important check failed, but IPv4 and default route exist. |
 | `critical` | IPv4 or default route is missing. |
@@ -1226,7 +1226,7 @@ dns_ok=false shortly after boot may indicate resolver timing, especially if late
 The runtime supports multiple profile states:
 
 | Profile | Meaning |
-|---|---|
+|--|--|
 | `target` | New One-Liner layout, for example `/opt/bots/trx`. |
 | `legacy` | Older DMR/GGB style layout, for example `/home/ggb/bots/ggb`. |
 | `hybrid` | Transitional layout with both legacy and target markers. |
@@ -1256,7 +1256,7 @@ upload-pending
 ## 30. Known Checks and Signals
 
 | Check | Meaning |
-|---|---|
+|--|--|
 | `has_ipv4` | At least one IPv4 address was detected. |
 | `has_default_route` | A default route exists. |
 | `gateway_ping_ok` | Gateway ping returned success. |
@@ -1267,7 +1267,7 @@ upload-pending
 Recommended interpretation:
 
 | Signal | Meaning |
-|---|---|
+|--|--|
 | `has_ipv4=false` | Critical boot/network problem. |
 | `has_default_route=false` | Critical routing problem. |
 | `gateway_ping_ok=false` | Router or WLAN routing may not be ready. |
@@ -1283,27 +1283,27 @@ The current One-Liner target layout for a JR-Bot instance is:
 
 ```text
 /opt/bots/{instance}/
-â”œâ”€â”€ audits/
-â”‚   â”œâ”€â”€ audit_jr-bot-boot-report.sh
-â”‚   â”œâ”€â”€ audit_jr-bot-network-health.sh
-â”‚   â””â”€â”€ audit_jr-bot-structure.sh
-â”œâ”€â”€ config/
-â”‚   â”œâ”€â”€ config.ini
-â”‚   â””â”€â”€ report_upload.token
-â”œâ”€â”€ docs/
-â”‚   â”œâ”€â”€ audits/
-â”‚   â””â”€â”€ scripts/
-â”œâ”€â”€ logs/
-â”œâ”€â”€ reports/
-â”‚   â””â”€â”€ pending/
-â”œâ”€â”€ scripts/
-â”œâ”€â”€ src/
-â”‚   â””â”€â”€ job_runner.py
-â”œâ”€â”€ state/
-â”œâ”€â”€ tmp/
-â”œâ”€â”€ venv/
-â”œâ”€â”€ install_info.txt
-â””â”€â”€ requirements.txt
+|-- audits/
+|   |-- audit_jr-bot-boot-report.sh
+|   |-- audit_jr-bot-network-health.sh
+|   `-- audit_jr-bot-structure.sh
+|-- config/
+|   |-- config.ini
+|   `-- report_upload.token
+|-- docs/
+|   |-- audits/
+|   `-- scripts/
+|-- logs/
+|-- reports/
+|   `-- pending/
+|-- scripts/
+|-- src/
+|   `-- job_runner.py
+|-- state/
+|-- tmp/
+|-- venv/
+|-- install_info.txt
+`-- requirements.txt
 ```
 
 Target Boot Report runtime path:
@@ -1441,7 +1441,7 @@ Expected One-Liner target path pattern:
 Known target assignment:
 
 ```text
-DMR â†’ 192.168.178.201
+DMR -> 192.168.178.201
 ```
 
 Possible legacy command:
@@ -1458,7 +1458,7 @@ Possible legacy command:
 Known target assignment:
 
 ```text
-GGB â†’ 192.168.178.202
+GGB -> 192.168.178.202
 ```
 
 Possible legacy/hybrid command:
@@ -1482,25 +1482,25 @@ Recommended target GitHub repository structure:
 
 ```text
 jr-bot/
-â”œâ”€â”€ install_jr-bot.sh
-â”œâ”€â”€ audits/
-â”‚   â”œâ”€â”€ audit_jr-bot-boot-report.sh
-â”‚   â”œâ”€â”€ audit_jr-bot-network-health.sh
-â”‚   â””â”€â”€ audit_jr-bot-structure.sh
-â”œâ”€â”€ docs/
-â”‚   â”œâ”€â”€ architecture.md
-â”‚   â””â”€â”€ audits/
-â”‚       â”œâ”€â”€ audit-ingest-contract.md
-â”‚       â”œâ”€â”€ audit_jr-bot-boot-report.md
-â”‚       â”œâ”€â”€ audit_jr-bot-network-health.md
-â”‚       â””â”€â”€ audit_jr-bot-structure.md
-â”œâ”€â”€ runtime/
-â”‚   â”œâ”€â”€ src/
-â”‚   â”œâ”€â”€ scripts/
-â”‚   â”œâ”€â”€ requirements.txt
-â”‚   â””â”€â”€ templates/
-â””â”€â”€ systemd/
-    â””â”€â”€ templates/
+|-- install_jr-bot.sh
+|-- audits/
+|   |-- audit_jr-bot-boot-report.sh
+|   |-- audit_jr-bot-network-health.sh
+|   `-- audit_jr-bot-structure.sh
+|-- docs/
+|   |-- architecture.md
+|   `-- audits/
+|       |-- audit-ingest-contract.md
+|       |-- audit_jr-bot-boot-report.md
+|       |-- audit_jr-bot-network-health.md
+|       `-- audit_jr-bot-structure.md
+|-- runtime/
+|   |-- src/
+|   |-- scripts/
+|   |-- requirements.txt
+|   `-- templates/
+`-- systemd/
+    `-- templates/
 ```
 
 This handbook belongs in the repository at:
@@ -1525,10 +1525,10 @@ Recommended local structure:
 
 ```text
 /opt/bots/{instance}/docs/audits/
-â”œâ”€â”€ audit-ingest-contract.md
-â”œâ”€â”€ audit_jr-bot-boot-report.md
-â”œâ”€â”€ audit_jr-bot-network-health.md
-â””â”€â”€ audit_jr-bot-structure.md
+|-- audit-ingest-contract.md
+|-- audit_jr-bot-boot-report.md
+|-- audit_jr-bot-network-health.md
+`-- audit_jr-bot-structure.md
 ```
 
 For legacy bots:
@@ -1542,9 +1542,9 @@ Recommended local audits:
 
 ```text
 /opt/bots/{instance}/audits/
-â”œâ”€â”€ audit_jr-bot-boot-report.sh
-â”œâ”€â”€ audit_jr-bot-network-health.sh
-â””â”€â”€ audit_jr-bot-structure.sh
+|-- audit_jr-bot-boot-report.sh
+|-- audit_jr-bot-network-health.sh
+`-- audit_jr-bot-structure.sh
 ```
 
 Recommended local reports:
@@ -1670,7 +1670,7 @@ Possible improvements:
 Possible future token models:
 
 | Model | Notes |
-|---|---|
+|--|--|
 | One shared per-bot upload token | Current validated model. Simple and sufficient for TRX. |
 | One token per audit script | Stronger separation. More setup and onboarding overhead. |
 | One-time upload token / OTP | Requires server-side state or challenge-response. Static hash files alone are not enough. |
@@ -1815,9 +1815,9 @@ Current instance-scoped token-hash path:
 Healthy current assignments:
 
 ```text
-DMR â†’ 192.168.178.201
-GGB â†’ 192.168.178.202
-TRX â†’ 192.168.178.203
+DMR -> 192.168.178.201
+GGB -> 192.168.178.202
+TRX -> 192.168.178.203
 ```
 
 Normal upload uses the central per-bot fallback token if no audit-specific token exists:
@@ -1852,4 +1852,3 @@ Later it should also exist locally on each bot:
 ```text
 /opt/bots/{instance}/docs/audits/audit_jr-bot-boot-report.md
 ```
-
