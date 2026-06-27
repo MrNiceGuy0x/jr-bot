@@ -3,7 +3,7 @@ set -euo pipefail
 
 # ==========================================================
 # JR-Bot Structure Audit
-# Version: 0.1.6
+# Version: 0.2.0
 # ==========================================================
 #
 # Purpose:
@@ -53,14 +53,14 @@ set -euo pipefail
 #
 # ==========================================================
 
-SCRIPT_VERSION="0.1.6"
+SCRIPT_VERSION="0.2.0"
 SCHEMA_VERSION="jrbot-structure-audit-v1"
 
 INSTANCE=""
 INSTALL_PATH=""
 MODE="target"
-PUSH_URL=""
-TOKEN=""
+PUSH_URL="${STRUCTURE_AUDIT_PUSH_URL:-https://opscon.blenk.co.at/api/jrbot_audit_structure_ingest.php}"
+TOKEN="${REPORT_UPLOAD_TOKEN:-}"
 OUTPUT_FILE=""
 OUTPUT_FILE_USER_SET="false"
 PRINT_JSON="false"
@@ -206,6 +206,34 @@ EXPECTED_USER="$INSTANCE_LOWER"
 if [[ -z "$OUTPUT_FILE" ]]; then
     TS_FILE="$(date -u +"%Y%m%d_%H%M%S")"
     OUTPUT_FILE="/tmp/audit_jr-bot-structure-${INSTANCE_LOWER}-${TS_FILE}.json"
+fi
+
+# ----------------------------------------------------------
+# Token auto-discovery
+# ----------------------------------------------------------
+#
+# Token lookup order:
+#   1) REPORT_UPLOAD_TOKEN environment variable
+#   2) <bot-path>/config/audit_structure.token
+#   3) <bot-path>/config/structure_upload.token
+#   4) <bot-path>/config/report_upload.token
+#
+# The token is never written to the command line during curl upload.
+# It is passed through a temporary curl config file with 0600 permissions.
+
+if [[ -z "$TOKEN" ]]; then
+    for TOKEN_FILE in \
+        "$INSTALL_PATH/config/audit_structure.token" \
+        "$INSTALL_PATH/config/structure_upload.token" \
+        "$INSTALL_PATH/config/report_upload.token"
+    do
+        if [[ -f "$TOKEN_FILE" ]]; then
+            TOKEN="$(tr -d '\r\n' < "$TOKEN_FILE")"
+            if [[ -n "$TOKEN" ]]; then
+                break
+            fi
+        fi
+    done
 fi
 
 if ! command -v python3 >/dev/null 2>&1; then
@@ -1220,29 +1248,35 @@ if [[ -n "$PUSH_URL" ]]; then
     fi
 
     if [[ -z "$TOKEN" ]]; then
-        if [[ -e /dev/tty ]]; then
-            read -rsp "OPSCON Structure-Audit Token eingeben: " TOKEN </dev/tty
-            echo >&2
-        fi
-    fi
-
-    if [[ -z "$TOKEN" ]]; then
         die "Kein OPSCON Audit-Token vorhanden. Upload abgebrochen."
     fi
 
     RESPONSE_FILE="$(mktemp /tmp/audit_jr-bot-structure-upload-response.XXXXXX.txt)"
+    CURL_CONFIG="$(mktemp /tmp/audit_jr-bot-structure-curl.XXXXXX.conf)"
+
+    chmod 600 "$RESPONSE_FILE" "$CURL_CONFIG" 2>/dev/null || true
 
     info "Sende Structure-Audit JSON an OPSCON als Datei-Upload..."
 
-    HTTP_CODE="$(curl -fsSL \
-        -w "%{http_code}" \
-        -o "$RESPONSE_FILE" \
-        -X POST \
-        -F "token=${TOKEN}" \
-        -F "instance=${INSTANCE_LOWER}" \
-        -F "mode=${MODE}" \
-        -F "audit_file=@${OUTPUT_FILE};type=application/json" \
-        "$PUSH_URL" || true)"
+    cat > "$CURL_CONFIG" <<EOF
+fail
+show-error
+silent
+location
+connect-timeout = 10
+max-time = 60
+request = "POST"
+output = "$RESPONSE_FILE"
+write-out = "%{http_code}"
+header = "X-OPSCON-INGEST-TOKEN: ${TOKEN}"
+form = "instance=${INSTANCE_LOWER}"
+form = "mode=${MODE}"
+form = "audit_file=@${OUTPUT_FILE};type=application/json"
+url = "${PUSH_URL}"
+EOF
+
+    HTTP_CODE="$(curl --config "$CURL_CONFIG" || true)"
+    rm -f "$CURL_CONFIG"
 
     if [[ "$HTTP_CODE" != "200" ]]; then
         error "Upload fehlgeschlagen. HTTP-Code: ${HTTP_CODE}"
