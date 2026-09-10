@@ -1,0 +1,14 @@
+[Unit]
+Description=JR-Bot Runner (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=%i
+Group=%i
+WorkingDirectory=/opt/bots/%i
+ExecStart=/opt/bots/%i/venv/bin/python /opt/bots/%i/src/job_runner.py --config /opt/bots/%i/config/config.ini
+
+StandardOutput=journal
+StandardError=journal

@@ -1,0 +1,18 @@
+[Unit]
+Description=JR-Bot Local Boot Report Audit (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=%i
+Group=%i
+WorkingDirectory=/opt/bots/%i
+ExecStartPre=/bin/sleep 30
+ExecStart=/opt/bots/%i/audits/audit_jr-bot-boot-report.sh --instance %i --path /opt/bots/%i --mode boot
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
