@@ -214,11 +214,104 @@ install_system_packages() {
     fi
 }
 
+assert_foundation_path_safety() {
+    local install_dir="$1"
+    local current="/"
+    local part=""
+    local rel=""
+    local -a parts=()
+    local -a canonical_dirs=(
+        config
+        src
+        scripts
+        audits
+        docs
+        docs/scripts
+        docs/audits
+        reports
+        reports/audits
+        logs
+        state
+        tmp
+        venv
+    )
+
+    IFS='/' read -r -a parts <<< "${install_dir#/}"
+    for part in "${parts[@]}"; do
+        [[ -z "$part" ]] && continue
+
+        if [[ "$current" == "/" ]]; then
+            current="/${part}"
+        else
+            current="${current}/${part}"
+        fi
+
+        if [[ -L "$current" ]]; then
+            die "Refusing Target path with symlink component: ${current}"
+        fi
+    done
+
+    for rel in "${canonical_dirs[@]}"; do
+        if [[ -L "$install_dir/$rel" ]]; then
+            die "Refusing canonical runtime directory symlink: $install_dir/$rel"
+        fi
+    done
+}
+
+apply_foundation_directory_permissions() {
+    local install_dir="$1"
+    local run_as_user="$2"
+    local rel=""
+    local -a privileged_dirs=(
+        config
+        src
+        scripts
+        audits
+        docs
+        docs/scripts
+        docs/audits
+        venv
+    )
+    local -a writable_dirs=(
+        reports
+        reports/audits
+        logs
+        state
+        tmp
+    )
+
+    sudo chown "root:${run_as_user}" "$install_dir"
+    sudo chmod 0750 "$install_dir"
+
+    for rel in "${privileged_dirs[@]}"; do
+        sudo chown "root:${run_as_user}" "$install_dir/$rel"
+        sudo chmod 0750 "$install_dir/$rel"
+    done
+
+    for rel in "${writable_dirs[@]}"; do
+        sudo chown "${run_as_user}:${run_as_user}" "$install_dir/$rel"
+        sudo chmod 0750 "$install_dir/$rel"
+    done
+}
+
+normalize_venv_permissions() {
+    local install_dir="$1"
+    local run_as_user="$2"
+    local venv_dir="$install_dir/venv"
+
+    sudo chown -hR "root:${run_as_user}" "$venv_dir"
+    sudo find -P "$venv_dir" -type d -exec chmod 0750 {} +
+    sudo find -P "$venv_dir" -type f -perm /111 -exec chmod 0750 {} +
+    sudo find -P "$venv_dir" -type f ! -perm /111 -exec chmod 0640 {} +
+}
+
 create_directory_structure() {
     local install_dir="$1"
     local run_as_user="$2"
 
     info "Creating runtime structure under ${install_dir}..."
+
+    assert_foundation_path_safety "$install_dir"
 
     sudo mkdir -p \
         "$install_dir/config" \
@@ -230,10 +323,10 @@ create_directory_structure() {
         "$install_dir/reports/audits" \
         "$install_dir/logs" \
         "$install_dir/state" \
-        "$install_dir/tmp"
+        "$install_dir/tmp" \
+        "$install_dir/venv"
 
-    sudo chown -R "${run_as_user}:${run_as_user}" "$install_dir"
-    sudo chmod 700 "$install_dir/reports/audits"
+    apply_foundation_directory_permissions "$install_dir" "$run_as_user"
 
     info "Runtime structure created."
 }
@@ -242,9 +335,10 @@ create_python_venv() {
     local install_dir="$1"
     local run_as_user="$2"
 
-    info "Creating Python virtual environment..."
-    sudo -u "$run_as_user" python3 -m venv "$install_dir/venv"
-    sudo -u "$run_as_user" "$install_dir/venv/bin/python" -m pip install --upgrade pip
+    info "Creating privileged Python virtual environment..."
+    sudo python3 -m venv "$install_dir/venv"
+    sudo "$install_dir/venv/bin/python" -m pip install --upgrade pip
+    normalize_venv_permissions "$install_dir" "$run_as_user"
 }
 
 create_requirements_file() {
@@ -256,10 +350,11 @@ requests
 python-dotenv
 EOF
 
-    sudo chown "${run_as_user}:${run_as_user}" "$install_dir/requirements.txt"
-    sudo chmod 644 "$install_dir/requirements.txt"
+    sudo chown "root:${run_as_user}" "$install_dir/requirements.txt"
+    sudo chmod 0640 "$install_dir/requirements.txt"
 
-    sudo -u "$run_as_user" "$install_dir/venv/bin/pip" install -r "$install_dir/requirements.txt"
+    sudo "$install_dir/venv/bin/pip" install -r "$install_dir/requirements.txt"
+    normalize_venv_permissions "$install_dir" "$run_as_user"
 }
 
 create_config_ini() {
@@ -300,8 +395,8 @@ REPORTS_DIR = reports
 AUDIT_REPORTS_DIR = reports/audits
 EOF
 
-    sudo chown "${run_as_user}:${run_as_user}" "$install_dir/config/config.ini"
-    sudo chmod 600 "$install_dir/config/config.ini"
+    sudo chown "root:${run_as_user}" "$install_dir/config/config.ini"
+    sudo chmod 0640 "$install_dir/config/config.ini"
 
     info "Protected config written to ${install_dir}/config/config.ini"
 }
@@ -332,8 +427,8 @@ Audit storage: ${install_dir}/reports/audits
 Installed at UTC: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
 EOF
 
-    sudo chown "${run_as_user}:${run_as_user}" "$install_dir/install_info.txt"
-    sudo chmod 644 "$install_dir/install_info.txt"
+    sudo chown "root:${run_as_user}" "$install_dir/install_info.txt"
+    sudo chmod 0640 "$install_dir/install_info.txt"
 }
 
 create_job_runner() {
@@ -433,15 +528,15 @@ if __name__ == "__main__":
     main()
 PYEOF
 
-    sudo chown "${run_as_user}:${run_as_user}" "$install_dir/src/job_runner.py"
-    sudo chmod 755 "$install_dir/src/job_runner.py"
+    sudo chown "root:${run_as_user}" "$install_dir/src/job_runner.py"
+    sudo chmod 0640 "$install_dir/src/job_runner.py"
 }
 
 download_public_file() {
     local source_path="$1"
     local target_path="$2"
     local mode="$3"
-    local owner="$4"
+    local group="$4"
 
     local tmp_file
     tmp_file="$(mktemp)"
@@ -453,7 +548,7 @@ download_public_file() {
 
     sudo mkdir -p "$(dirname "$target_path")"
     sudo mv "$tmp_file" "$target_path"
-    sudo chown "${owner}:${owner}" "$target_path"
+    sudo chown "root:${group}" "$target_path"
     sudo chmod "$mode" "$target_path"
 }
 
@@ -505,19 +600,19 @@ install_public_runtime_files() {
     local name
 
     for name in "${scripts[@]}"; do
-        download_public_file "scripts/${name}" "$install_dir/scripts/${name}" 755 "$run_as_user"
+        download_public_file "scripts/${name}" "$install_dir/scripts/${name}" 750 "$run_as_user"
     done
 
     for name in "${audits[@]}"; do
-        download_public_file "audits/${name}" "$install_dir/audits/${name}" 755 "$run_as_user"
+        download_public_file "audits/${name}" "$install_dir/audits/${name}" 750 "$run_as_user"
     done
 
     for name in "${script_docs[@]}"; do
-        download_public_file "docs/scripts/${name}" "$install_dir/docs/scripts/${name}" 644 "$run_as_user"
+        download_public_file "docs/scripts/${name}" "$install_dir/docs/scripts/${name}" 640 "$run_as_user"
     done
 
     for name in "${audit_docs[@]}"; do
-        download_public_file "docs/audits/${name}" "$install_dir/docs/audits/${name}" 644 "$run_as_user"
+        download_public_file "docs/audits/${name}" "$install_dir/docs/audits/${name}" 640 "$run_as_user"
     done
 }
 

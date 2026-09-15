@@ -175,7 +175,7 @@ if [[ -z "$OUTPUT_FILE" ]]; then
     TS_FILE="$(date -u +"%Y%m%d_%H%M%S")"
 
     if mkdir -p "$AUDIT_DIR" 2>/dev/null; then
-        chmod 700 "$AUDIT_DIR" 2>/dev/null || true
+        chmod 750 "$AUDIT_DIR" 2>/dev/null || true
         OUTPUT_FILE="${AUDIT_DIR}/audit_jr-bot-structure-${INSTANCE_LOWER}-${TS_FILE}.json"
     else
         warn "Could not create reports/audits; using /tmp fallback."

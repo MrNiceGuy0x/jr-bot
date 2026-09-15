@@ -176,7 +176,7 @@ fi
 
 AUDIT_DIR="$INSTALL_PATH/reports/audits"
 mkdir -p "$AUDIT_DIR"
-chmod 700 "$AUDIT_DIR" 2>/dev/null || true
+chmod 750 "$AUDIT_DIR" 2>/dev/null || true
 
 detect_profile() {
     local path="$1"
