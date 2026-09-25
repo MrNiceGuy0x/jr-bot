@@ -4,7 +4,7 @@ umask 077
 
 # ==========================================================
 # JR-Bot Structure Audit
-# Version: 0.3.0
+# Version: 0.3.1-wp-fnd-02
 # ==========================================================
 #
 # Purpose:
@@ -21,7 +21,7 @@ umask 077
 #   - Sensitive text is redacted before inclusion where applicable.
 # ==========================================================
 
-SCRIPT_VERSION="0.3.0"
+SCRIPT_VERSION="0.3.1-wp-fnd-02"
 SCHEMA_VERSION="jrbot-structure-audit-v1"
 
 INSTANCE=""
@@ -210,6 +210,7 @@ export JR_STRUCT_AUDIT_TREE_MAX_ITEMS="$TREE_MAX_ITEMS"
 python3 > "$OUTPUT_FILE" <<'PY'
 from __future__ import annotations
 
+import configparser
 import json
 import os
 import platform
@@ -359,6 +360,99 @@ def key_present(path: Path, key: str) -> bool:
         return False
 
     return False
+
+
+
+def secret_slot_meta(path: Path) -> dict[str, Any]:
+    meta = file_meta(path)
+    return {
+        "path": meta["path"],
+        "exists": meta["exists"],
+        "owner": meta["owner"],
+        "group": meta["group"],
+        "permissions": meta["permissions"],
+    }
+
+
+def runtime_config_summary(path: Path, secrets_dir: Path, expected_group: str) -> dict[str, Any]:
+    config_meta = file_meta(path)
+    result = {
+        "exists": path.is_file(), "parse_ok": False, "management_mode": "", "database_mode": "",
+        "server_section_present": False, "server_base_present": False, "auth_mode": "",
+        "forbidden_plaintext_keys_present": [], "secrets_dir": secret_slot_meta(secrets_dir),
+        "server_token": secret_slot_meta(secrets_dir / "server.token"),
+        "ping_token": secret_slot_meta(secrets_dir / "ping.token"),
+        "role_consistent": False, "deviations": [],
+    }
+    if not path.is_file():
+        result["deviations"].append("CONFIG_INI_MISSING")
+        return result
+
+    if config_meta["owner"] != "root":
+        result["deviations"].append("CONFIG_OWNER_INVALID")
+    if config_meta["group"] != expected_group:
+        result["deviations"].append("CONFIG_GROUP_INVALID")
+    if config_meta["permissions"] != "640":
+        result["deviations"].append("CONFIG_MODE_INVALID")
+
+    secrets_meta = result["secrets_dir"]
+    if secrets_meta["exists"]:
+        if secrets_meta["owner"] != "root":
+            result["deviations"].append("SECRETS_DIR_OWNER_INVALID")
+        if secrets_meta["group"] != expected_group:
+            result["deviations"].append("SECRETS_DIR_GROUP_INVALID")
+        if secrets_meta["permissions"] != "750":
+            result["deviations"].append("SECRETS_DIR_MODE_INVALID")
+
+    for label, meta in (("SERVER_TOKEN", result["server_token"]), ("PING_TOKEN", result["ping_token"])):
+        if meta["exists"]:
+            if meta["owner"] != "root":
+                result["deviations"].append(f"{label}_OWNER_INVALID")
+            if meta["group"] != expected_group:
+                result["deviations"].append(f"{label}_GROUP_INVALID")
+            if meta["permissions"] != "640":
+                result["deviations"].append(f"{label}_MODE_INVALID")
+
+    parser = configparser.ConfigParser(interpolation=None)
+    try:
+        parser.read(path, encoding="utf-8")
+    except Exception:
+        result["deviations"].append("CONFIG_INI_PARSE_FAILED")
+        return result
+    result["parse_ok"] = True
+    result["management_mode"] = parser.get("bot", "MANAGEMENT_MODE", fallback="").strip()
+    result["database_mode"] = parser.get("bot", "DATABASE_MODE", fallback="").strip()
+    result["server_section_present"] = parser.has_section("server")
+    if result["server_section_present"]:
+        result["server_base_present"] = bool(parser.get("server", "SERVER_BASE", fallback="").strip())
+        result["auth_mode"] = parser.get("server", "AUTH_MODE", fallback="").strip()
+    else:
+        result["auth_mode"] = "none"
+    for section in parser.sections():
+        for key in ("SERVER_TOKEN", "PING_TOKEN"):
+            if parser.has_option(section, key): result["forbidden_plaintext_keys_present"].append(f"{section}.{key}")
+    s = bool(result["server_token"]["exists"]); p = bool(result["ping_token"]["exists"])
+    db = result["database_mode"]; auth = result["auth_mode"]
+    if result["management_mode"] not in ("standalone", "opscon_managed"): result["deviations"].append("MANAGEMENT_MODE_INVALID")
+    if db == "local_pi":
+        if result["server_section_present"]: result["deviations"].append("LOCAL_PI_SERVER_SECTION_PRESENT")
+        if s or p: result["deviations"].append("LOCAL_PI_RUNTIME_TOKEN_PRESENT")
+    elif db == "external":
+        if not result["server_section_present"]: result["deviations"].append("EXTERNAL_SERVER_SECTION_MISSING")
+        if not result["server_base_present"]: result["deviations"].append("EXTERNAL_SERVER_BASE_MISSING")
+        if auth == "none":
+            if s or p: result["deviations"].append("AUTH_NONE_RUNTIME_TOKEN_PRESENT")
+        elif auth == "server_token":
+            if not s: result["deviations"].append("SERVER_TOKEN_MISSING")
+            if p: result["deviations"].append("PING_TOKEN_UNEXPECTED")
+        elif auth == "split_ping_token":
+            if not s: result["deviations"].append("SERVER_TOKEN_MISSING")
+            if not p: result["deviations"].append("PING_TOKEN_MISSING")
+        else: result["deviations"].append("AUTH_MODE_INVALID")
+    else: result["deviations"].append("DATABASE_MODE_INVALID")
+    if result["forbidden_plaintext_keys_present"]: result["deviations"].append("PLAINTEXT_RUNTIME_TOKEN_KEY_IN_CONFIG")
+    result["role_consistent"] = not result["deviations"]
+    return result
 
 
 def user_info(username: str) -> dict[str, Any]:
@@ -1180,6 +1274,7 @@ venv_dir = INSTALL_PATH / "venv"
 data_dir = INSTALL_PATH / "data"
 
 config_ini = config_dir / "config.ini"
+secrets_dir = config_dir / "secrets"
 env_file = INSTALL_PATH / ".env"
 job_runner = src_dir / "job_runner.py"
 requirements = INSTALL_PATH / "requirements.txt"
@@ -1189,6 +1284,7 @@ os_release = read_os_release()
 cpu = read_cpu_info()
 systemd_data = collect_systemd()
 runtime_structure = collect_runtime_structure(systemd_data)
+runtime_config = runtime_config_summary(config_ini, secrets_dir, EXPECTED_USER)
 
 data: dict[str, Any] = {
     "schema": SCHEMA_VERSION,
@@ -1256,16 +1352,20 @@ data: dict[str, Any] = {
     "files": {
         "config_ini": {
             **file_meta(config_ini),
-            "permissions_ok": file_meta(config_ini)["permissions"] == "600",
+            "permissions_ok": file_meta(config_ini)["permissions"] == "640",
             "contains_keys": {
                 "PROJECT_NAME": key_present(config_ini, "PROJECT_NAME"),
                 "BOT_NAME": key_present(config_ini, "BOT_NAME"),
                 "INSTANCE_NAME": key_present(config_ini, "INSTANCE_NAME"),
+                "MANAGEMENT_MODE": key_present(config_ini, "MANAGEMENT_MODE"),
+                "DATABASE_MODE": key_present(config_ini, "DATABASE_MODE"),
                 "SERVER_BASE": key_present(config_ini, "SERVER_BASE"),
+                "AUTH_MODE": key_present(config_ini, "AUTH_MODE"),
                 "SERVER_TOKEN": key_present(config_ini, "SERVER_TOKEN"),
                 "PING_TOKEN": key_present(config_ini, "PING_TOKEN"),
             },
         },
+        "runtime_config": runtime_config,
         "env_file": {
             **file_meta(env_file),
             "permissions_ok": file_meta(env_file)["permissions"] == "600",
@@ -1292,6 +1392,10 @@ data["summary"] = {
         "install_dir_exists": INSTALL_PATH.exists(),
         "job_runner_exists": job_runner.exists(),
         "config_or_env_exists": config_ini.exists() or env_file.exists(),
+        "config_ini_mode_0640": file_meta(config_ini)["permissions"] == "640",
+        "runtime_config_parse_ok": runtime_config["parse_ok"],
+        "runtime_config_role_consistent": runtime_config["role_consistent"],
+        "runtime_config_secret_values_included": False,
         "venv_python_exists": (venv_dir / "bin" / "python").exists(),
         "systemd_timer_known": systemd_data["instance_timer"]["load_state"] != "not-found" or systemd_data["legacy_timer"]["exists"],
         "boot_audit_service_known": systemd_data["boot_audit_service"]["load_state"] != "not-found",

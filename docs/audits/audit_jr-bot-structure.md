@@ -1,7 +1,7 @@
 # Structure Audit
 
 **Script:** `audits/audit_jr-bot-structure.sh`
-**Script version:** `0.3.0`
+**Script version:** `0.3.1-wp-fnd-02`
 **Schema:** `jrbot-structure-audit-v1`
 **Public v1 storage:** local only
 
@@ -17,6 +17,8 @@ The collector does not transmit reports.
 /opt/bots/<instance>/
 ├── audits/
 ├── config/
+│   ├── config.ini
+│   └── secrets/            # conditional
 ├── docs/
 │   ├── audits/
 │   └── scripts/
@@ -30,7 +32,9 @@ The collector does not transmit reports.
 └── venv/
 ```
 
-The audit also records legacy layout signals for migration diagnostics, but legacy paths are not the public-v1 target.
+`config/secrets/` is conditional and is not an unconditional WP-FND-01 directory.
+The audit also records legacy layout signals for migration diagnostics, but legacy
+paths are not the public-v1 target.
 
 ## Standard scripts
 
@@ -77,9 +81,52 @@ If `--path` is omitted, `/opt/bots/<instance>` is used.
 
 Input is trimmed and lowercased. Invalid input is rejected instead of rewritten.
 
-## Configuration safety
+## Configuration and runtime-secret checks
 
-The audit may report whether expected configuration keys exist, but must not intentionally emit secret values. Production `config.ini`, `.env`, keys and generated reports are local runtime data and must not be committed.
+Canonical non-secret configuration is `config/config.ini` with mode `0640`.
+The audit reports the non-secret selectors:
+
+```text
+MANAGEMENT_MODE
+DATABASE_MODE
+SERVER_BASE      # external only
+AUTH_MODE        # external only
+```
+
+For `DATABASE_MODE=local_pi`, an active `[server]` section is drift.
+
+For `DATABASE_MODE=external`, `[server]`, `SERVER_BASE` and `AUTH_MODE` are
+required.
+
+Canonical runtime-token paths are:
+
+```text
+config/secrets/server.token
+config/secrets/ping.token
+```
+
+Role expectations:
+
+```text
+AUTH_MODE=none
+  server.token absent
+  ping.token absent
+
+AUTH_MODE=server_token
+  server.token present
+  ping.token absent
+
+AUTH_MODE=split_ping_token
+  server.token present
+  ping.token present
+```
+
+The audit may report only path, existence, owner, group, mode and role-consistency
+metadata for runtime token files. Secret values and secret hashes are never
+included.
+
+Production `config.ini`, `.env`, keys and generated reports are local runtime
+data and must not be committed.
 
 ## systemd checks
 
@@ -110,4 +157,5 @@ The JSON report declares:
 }
 ```
 
+WP-FND-02 additionally reports `runtime_config_secret_values_included=false`.
 The audit is intended to identify drift, not repair it.

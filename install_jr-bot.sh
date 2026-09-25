@@ -3,7 +3,7 @@ set -euo pipefail
 
 # ==========================================================
 # JR-Bot Universal Installer
-# Version: 0.4.0-dev-public-v1
+# Version: 0.4.0-dev-wp-fnd-02
 # ==========================================================
 #
 # Public-v1 audit boundary:
@@ -17,12 +17,15 @@ set -euo pipefail
 #     local-only audit storage.
 # ==========================================================
 
-SCRIPT_VERSION="0.4.0-dev-public-v1"
+SCRIPT_VERSION="0.4.0-dev-wp-fnd-02"
 
 DEFAULT_PROJECT_NAME="My Project"
 DEFAULT_BOT_NAME="JRBot"
 DEFAULT_INSTANCE_NAME="jrbot"
 DEFAULT_INTERVAL_SECONDS="60"
+DEFAULT_MANAGEMENT_MODE="standalone"
+DEFAULT_DATABASE_MODE="local_pi"
+DEFAULT_AUTH_MODE="none"
 
 GITHUB_REF="${JR_BOT_GITHUB_REF:-main}"
 GITHUB_RAW_BASE="https://raw.githubusercontent.com/MrNiceGuy0x/jr-bot/${GITHUB_REF}"
@@ -159,6 +162,47 @@ validate_interval() {
     if (( interval < 10 )); then
         die "Polling interval is too low. Minimum: 10 seconds."
     fi
+}
+
+
+normalize_management_mode() {
+    local value="$1"
+    value="$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')"
+    case "$value" in
+        standalone|opscon_managed) ;;
+        *) die "Invalid MANAGEMENT_MODE. Allowed: standalone, opscon_managed." ;;
+    esac
+    printf '%s\n' "$value"
+}
+
+normalize_database_mode() {
+    local value="$1"
+    value="$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')"
+    case "$value" in
+        local_pi|external) ;;
+        *) die "Invalid DATABASE_MODE. Allowed: local_pi, external." ;;
+    esac
+    printf '%s\n' "$value"
+}
+
+normalize_auth_mode() {
+    local value="$1"
+    value="$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')"
+    case "$value" in
+        none|server_token|split_ping_token) ;;
+        *) die "Invalid AUTH_MODE. Allowed: none, server_token, split_ping_token." ;;
+    esac
+    printf '%s\n' "$value"
+}
+
+normalize_server_base() {
+    local value="$1"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    while [[ "$value" == */ ]]; do value="${value%/}"; done
+    [[ -n "$value" ]] || die "SERVER_BASE is required for DATABASE_MODE=external."
+    [[ "$value" =~ ^https://[^[:space:]]+$ ]] || die "SERVER_BASE must be a canonical HTTPS URL without whitespace."
+    printf '%s\n' "$value"
 }
 
 check_interactive_terminal() {
@@ -357,30 +401,66 @@ EOF
     normalize_venv_permissions "$install_dir" "$run_as_user"
 }
 
-create_config_ini() {
+atomic_stage_root_file() {
+    local target_path="$1"
+    local group="$2"
+    local mode="$3"
+    local content="$4"
+    local target_dir target_name tmp_path
+    target_dir="$(dirname "$target_path")"
+    target_name="$(basename "$target_path")"
+    sudo mkdir -p "$target_dir"
+    tmp_path="$(sudo mktemp "${target_dir}/.${target_name}.tmp.XXXXXX")"
+    if ! printf '%s\n' "$content" | sudo tee "$tmp_path" >/dev/null; then
+        sudo rm -f "$tmp_path" || true
+        die "Failed to stage protected runtime file: ${target_path}"
+    fi
+    sudo chown "root:${group}" "$tmp_path"
+    sudo chmod "$mode" "$tmp_path"
+    printf '%s\n' "$tmp_path"
+}
+
+atomic_commit_staged_file() {
+    local staged_path="$1"
+    local target_path="$2"
+    sudo mv -f "$staged_path" "$target_path"
+}
+
+remove_runtime_secret_if_present() {
+    local path="$1"
+    [[ ! -e "$path" && ! -L "$path" ]] || sudo rm -f "$path"
+}
+
+apply_runtime_configuration() {
     local install_dir="$1"
     local run_as_user="$2"
     local project_name="$3"
     local bot_name="$4"
     local instance_name="$5"
-    local server_base="$6"
-    local interval_seconds="$7"
-    local server_token="$8"
-    local ping_token="$9"
+    local management_mode="$6"
+    local database_mode="$7"
+    local server_base="$8"
+    local auth_mode="$9"
+    local interval_seconds="${10}"
+    local server_token="${11}"
+    local ping_token="${12}"
+    local config_path="${install_dir}/config/config.ini"
+    local secrets_dir="${install_dir}/config/secrets"
+    local server_token_path="${secrets_dir}/server.token"
+    local ping_token_path="${secrets_dir}/ping.token"
+    local config_body="" staged_config="" staged_server_token="" staged_ping_token=""
 
-    sudo tee "$install_dir/config/config.ini" >/dev/null <<EOF
+    if [[ "$database_mode" == "local_pi" ]]; then
+        if [[ "$auth_mode" != "none" || -n "$server_base" || -n "$server_token" || -n "$ping_token" ]]; then
+            die "DATABASE_MODE=local_pi forbids active server/auth configuration."
+        fi
+        config_body="$(cat <<EOF
 [bot]
 PROJECT_NAME = ${project_name}
 BOT_NAME = ${bot_name}
 INSTANCE_NAME = ${instance_name}
-
-[backend]
-MODE = remote_api
-
-[server]
-SERVER_BASE = ${server_base}
-SERVER_TOKEN = ${server_token}
-PING_TOKEN = ${ping_token}
+MANAGEMENT_MODE = ${management_mode}
+DATABASE_MODE = ${database_mode}
 
 [polling]
 INTERVAL_SECONDS = ${interval_seconds}
@@ -394,21 +474,78 @@ TMP_DIR = tmp
 REPORTS_DIR = reports
 AUDIT_REPORTS_DIR = reports/audits
 EOF
+)"
+    else
+        [[ -n "$server_base" ]] || die "SERVER_BASE is required for DATABASE_MODE=external."
+        case "$auth_mode" in
+            none)
+                [[ -z "$server_token" && -z "$ping_token" ]] || die "AUTH_MODE=none forbids runtime token material."
+                ;;
+            server_token)
+                [[ -n "$server_token" ]] || die "AUTH_MODE=server_token requires SERVER_TOKEN."
+                [[ -z "$ping_token" ]] || die "AUTH_MODE=server_token forbids PING_TOKEN material."
+                ;;
+            split_ping_token)
+                [[ -n "$server_token" ]] || die "AUTH_MODE=split_ping_token requires SERVER_TOKEN."
+                [[ -n "$ping_token" ]] || die "AUTH_MODE=split_ping_token requires PING_TOKEN."
+                ;;
+            *) die "Unexpected AUTH_MODE: ${auth_mode}" ;;
+        esac
+        config_body="$(cat <<EOF
+[bot]
+PROJECT_NAME = ${project_name}
+BOT_NAME = ${bot_name}
+INSTANCE_NAME = ${instance_name}
+MANAGEMENT_MODE = ${management_mode}
+DATABASE_MODE = ${database_mode}
 
-    sudo chown "root:${run_as_user}" "$install_dir/config/config.ini"
-    sudo chmod 0640 "$install_dir/config/config.ini"
+[server]
+SERVER_BASE = ${server_base}
+AUTH_MODE = ${auth_mode}
 
-    info "Protected config written to ${install_dir}/config/config.ini"
+[polling]
+INTERVAL_SECONDS = ${interval_seconds}
+LOG_LEVEL = INFO
+
+[paths]
+BASE_DIR = ${install_dir}
+LOG_DIR = logs
+STATE_DIR = state
+TMP_DIR = tmp
+REPORTS_DIR = reports
+AUDIT_REPORTS_DIR = reports/audits
+EOF
+)"
+    fi
+
+    if [[ "$auth_mode" == "server_token" || "$auth_mode" == "split_ping_token" ]]; then
+        sudo mkdir -p "$secrets_dir"
+        sudo chown "root:${run_as_user}" "$secrets_dir"
+        sudo chmod 0750 "$secrets_dir"
+        staged_server_token="$(atomic_stage_root_file "$server_token_path" "$run_as_user" 0640 "$server_token")"
+    fi
+    if [[ "$auth_mode" == "split_ping_token" ]]; then
+        staged_ping_token="$(atomic_stage_root_file "$ping_token_path" "$run_as_user" 0640 "$ping_token")"
+    fi
+    staged_config="$(atomic_stage_root_file "$config_path" "$run_as_user" 0640 "$config_body")"
+    [[ -z "$staged_server_token" ]] || atomic_commit_staged_file "$staged_server_token" "$server_token_path"
+    [[ -z "$staged_ping_token" ]] || atomic_commit_staged_file "$staged_ping_token" "$ping_token_path"
+    atomic_commit_staged_file "$staged_config" "$config_path"
+    case "$auth_mode" in
+        none)
+            remove_runtime_secret_if_present "$server_token_path"
+            remove_runtime_secret_if_present "$ping_token_path"
+            sudo rmdir "$secrets_dir" 2>/dev/null || true
+            ;;
+        server_token) remove_runtime_secret_if_present "$ping_token_path" ;;
+        split_ping_token) ;;
+    esac
+    info "Canonical runtime configuration written to ${config_path}"
 }
 
 create_install_info() {
-    local install_dir="$1"
-    local run_as_user="$2"
-    local project_name="$3"
-    local bot_name="$4"
-    local instance_name="$5"
-    local interval_seconds="$6"
-
+    local install_dir="$1" run_as_user="$2" project_name="$3" bot_name="$4" instance_name="$5"
+    local management_mode="$6" database_mode="$7" server_base="$8" auth_mode="$9" interval_seconds="${10}"
     sudo tee "$install_dir/install_info.txt" >/dev/null <<EOF
 JR-Bot Universal Installer
 Version: ${SCRIPT_VERSION}
@@ -418,18 +555,19 @@ Bot: ${bot_name}
 Instance: ${instance_name}
 Install dir: ${install_dir}
 Run as user: ${run_as_user}
-Backend: remote_api
-Systemd runner timer: bot-runner@${instance_name}.timer
-Boot audit service: jrbot-boot-report-audit@${instance_name}.service
+Management mode: ${management_mode}
+Database mode: ${database_mode}
+Server base: ${server_base}
+Auth mode: ${auth_mode}
 Interval seconds: ${interval_seconds}
 Audit storage: ${install_dir}/reports/audits
 
 Installed at UTC: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
 EOF
-
     sudo chown "root:${run_as_user}" "$install_dir/install_info.txt"
     sudo chmod 0640 "$install_dir/install_info.txt"
 }
+
 
 create_job_runner() {
     local install_dir="$1"
@@ -447,7 +585,7 @@ This runner currently verifies:
 - config.ini loading
 - optional --config argument
 - log writing to logs/job_runner.log
-- basic remote_api configuration presence
+- canonical management/database/server configuration presence
 
 The full generic job protocol is outside the public-v1 audit cleanup scope.
 """
@@ -508,16 +646,24 @@ def main() -> None:
     project_name = config.get("bot", "PROJECT_NAME", fallback="UNKNOWN")
     bot_name = config.get("bot", "BOT_NAME", fallback="UNKNOWN")
     instance_name = config.get("bot", "INSTANCE_NAME", fallback="UNKNOWN")
-    backend_mode = config.get("backend", "MODE", fallback="UNKNOWN")
-    server_base = config.get("server", "SERVER_BASE", fallback="")
+    management_mode = config.get("bot", "MANAGEMENT_MODE", fallback="UNKNOWN")
+    database_mode = config.get("bot", "DATABASE_MODE", fallback="UNKNOWN")
+    if config.has_section("server"):
+        server_base = config.get("server", "SERVER_BASE", fallback="")
+        auth_mode = config.get("server", "AUTH_MODE", fallback="UNKNOWN")
+    else:
+        server_base = ""
+        auth_mode = "none"
 
     write_log(
         "JR-Bot runner start "
         f"project={project_name} "
         f"bot={bot_name} "
         f"instance={instance_name} "
-        f"backend={backend_mode} "
+        f"management_mode={management_mode} "
+        f"database_mode={database_mode} "
         f"server_base={server_base} "
+        f"auth_mode={auth_mode} "
         f"config={config_file}"
     )
 
@@ -688,8 +834,11 @@ print_summary() {
     local instance_name="$3"
     local install_dir="$4"
     local run_as_user="$5"
-    local server_base="$6"
-    local interval_seconds="$7"
+    local management_mode="$6"
+    local database_mode="$7"
+    local server_base="$8"
+    local auth_mode="$9"
+    local interval_seconds="${10}"
 
     echo
     echo "=================================================="
@@ -700,12 +849,15 @@ print_summary() {
     echo "Instance:             ${instance_name}"
     echo "Runtime user:         ${run_as_user}"
     echo "Install path:         ${install_dir}"
-    echo "Backend:              remote_api"
+    echo "Management mode:      ${management_mode}"
+    echo "Database mode:        ${database_mode}"
     echo "Server base:          ${server_base}"
+    echo "Auth mode:            ${auth_mode}"
     echo "Polling interval:     ${interval_seconds} seconds"
     echo
     echo "Local runtime paths:"
     echo "Config:               ${install_dir}/config/config.ini"
+    echo "Runtime secrets:      ${install_dir}/config/secrets (conditional)"
     echo "Runner:               ${install_dir}/src/job_runner.py"
     echo "Runner log:           ${install_dir}/logs/job_runner.log"
     echo "Scripts:              ${install_dir}/scripts"
@@ -729,10 +881,11 @@ main() {
     check_interactive_terminal
     check_basic_commands
 
-    echo "Public v1 onboarding"
-    echo "--------------------"
+    echo "Public WP-FND-02 onboarding"
+    echo "---------------------------"
     echo "Target: one JR-Bot runtime per node under /opt/bots/<instance>"
     echo "Audit storage: local only"
+    echo "Runtime credentials: protected files under config/secrets/ when required"
     echo
 
     PROJECT_NAME="$(ask_with_default "Project name" "$DEFAULT_PROJECT_NAME")"
@@ -745,14 +898,39 @@ main() {
 
     INSTALL_DIR="/opt/bots/${INSTANCE_NAME}"
 
-    SERVER_BASE="$(ask_required "Project API base URL")"
+    MANAGEMENT_MODE_RAW="$(ask_with_default "MANAGEMENT_MODE (standalone|opscon_managed)" "$DEFAULT_MANAGEMENT_MODE")"
+    MANAGEMENT_MODE="$(normalize_management_mode "$MANAGEMENT_MODE_RAW")"
+
+    DATABASE_MODE_RAW="$(ask_with_default "DATABASE_MODE (local_pi|external)" "$DEFAULT_DATABASE_MODE")"
+    DATABASE_MODE="$(normalize_database_mode "$DATABASE_MODE_RAW")"
+
+    SERVER_BASE=""
+    AUTH_MODE="none"
+    SERVER_TOKEN=""
+    PING_TOKEN=""
+
+    if [[ "$DATABASE_MODE" == "external" ]]; then
+        SERVER_BASE_RAW="$(ask_required "Project Handler SERVER_BASE (HTTPS)")"
+        SERVER_BASE="$(normalize_server_base "$SERVER_BASE_RAW")"
+
+        AUTH_MODE_RAW="$(ask_with_default "AUTH_MODE (none|server_token|split_ping_token)" "$DEFAULT_AUTH_MODE")"
+        AUTH_MODE="$(normalize_auth_mode "$AUTH_MODE_RAW")"
+
+        case "$AUTH_MODE" in
+            none)
+                ;;
+            server_token)
+                SERVER_TOKEN="$(ask_secret_required "SERVER_TOKEN")"
+                ;;
+            split_ping_token)
+                SERVER_TOKEN="$(ask_secret_required "SERVER_TOKEN")"
+                PING_TOKEN="$(ask_secret_required "PING_TOKEN")"
+                ;;
+        esac
+    fi
+
     INTERVAL_SECONDS="$(ask_with_default "Polling interval in seconds" "$DEFAULT_INTERVAL_SECONDS")"
     validate_interval "$INTERVAL_SECONDS"
-
-    echo
-    echo "Runtime backend credentials are stored locally in protected config.ini."
-    SERVER_TOKEN="$(ask_secret_required "SERVER_TOKEN")"
-    PING_TOKEN="$(ask_secret_required "PING_TOKEN")"
 
     echo
     echo "Planned installation:"
@@ -761,9 +939,12 @@ main() {
     echo "Instance:             ${INSTANCE_NAME}"
     echo "Runtime user:         ${RUN_AS_USER}"
     echo "Install path:         ${INSTALL_DIR}"
-    echo "Backend:              remote_api"
-    echo "Project API base URL: ${SERVER_BASE}"
+    echo "Management mode:      ${MANAGEMENT_MODE}"
+    echo "Database mode:        ${DATABASE_MODE}"
+    echo "Server base:          ${SERVER_BASE}"
+    echo "Auth mode:            ${AUTH_MODE}"
     echo "Audit storage:        ${INSTALL_DIR}/reports/audits (local only)"
+    echo "Runtime secrets:      ${INSTALL_DIR}/config/secrets (conditional)"
     echo
 
     if ! confirm_default_yes "Start installation with these values?"; then
@@ -778,13 +959,16 @@ main() {
     create_python_venv "$INSTALL_DIR" "$RUN_AS_USER"
     create_requirements_file "$INSTALL_DIR" "$RUN_AS_USER"
 
-    create_config_ini \
+    apply_runtime_configuration \
         "$INSTALL_DIR" \
         "$RUN_AS_USER" \
         "$PROJECT_NAME" \
         "$BOT_NAME" \
         "$INSTANCE_NAME" \
+        "$MANAGEMENT_MODE" \
+        "$DATABASE_MODE" \
         "$SERVER_BASE" \
+        "$AUTH_MODE" \
         "$INTERVAL_SECONDS" \
         "$SERVER_TOKEN" \
         "$PING_TOKEN"
@@ -795,6 +979,10 @@ main() {
         "$PROJECT_NAME" \
         "$BOT_NAME" \
         "$INSTANCE_NAME" \
+        "$MANAGEMENT_MODE" \
+        "$DATABASE_MODE" \
+        "$SERVER_BASE" \
+        "$AUTH_MODE" \
         "$INTERVAL_SECONDS"
 
     create_job_runner "$INSTALL_DIR" "$RUN_AS_USER"
@@ -829,7 +1017,10 @@ main() {
         "$INSTANCE_NAME" \
         "$INSTALL_DIR" \
         "$RUN_AS_USER" \
+        "$MANAGEMENT_MODE" \
+        "$DATABASE_MODE" \
         "$SERVER_BASE" \
+        "$AUTH_MODE" \
         "$INTERVAL_SECONDS"
 }
 

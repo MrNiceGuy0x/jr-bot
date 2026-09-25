@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify the WP-FND-01 Public Runtime Foundation contract."""
+"""Verify WP-FND-01 invariants remain intact through WP-FND-02."""
 
 from __future__ import annotations
 
@@ -74,6 +74,12 @@ def main() -> int:
 
     require_all(installer, MANDATORY_DIR_MARKERS, "installer mandatory tree")
 
+    foundation_block = re.search(r"create_directory_structure\(\) \{(?P<body>.*?)\n\}", installer, re.DOTALL)
+    if not foundation_block:
+        fail("create_directory_structure function missing")
+    if "config/secrets" in foundation_block.group("body"):
+        fail("config/secrets must remain conditional")
+
     if 'sudo chown -R "${run_as_user}:${run_as_user}" "$install_dir"' in installer:
         fail("installer still recursively assigns the install root to runtime user")
 
@@ -82,8 +88,8 @@ def main() -> int:
         [
             'sudo chown "root:${run_as_user}" "$install_dir"',
             'sudo chmod 0750 "$install_dir"',
-            'sudo chown "root:${run_as_user}" "$install_dir/config/config.ini"',
-            'sudo chmod 0640 "$install_dir/config/config.ini"',
+            'local config_path="${install_dir}/config/config.ini"',
+            'staged_config="$(atomic_stage_root_file "$config_path" "$run_as_user" 0640 "$config_body")"',
             'sudo chown "root:${run_as_user}" "$install_dir/src/job_runner.py"',
             'sudo chmod 0640 "$install_dir/src/job_runner.py"',
             'sudo chown "root:${group}" "$target_path"',
