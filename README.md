@@ -77,6 +77,36 @@ activation.
 
 See `docs/runtime-config-secrets.md` for the complete WP-FND-02 storage contract.
 
+## Generic systemd deployment contract
+
+The canonical generic runner templates are:
+
+```text
+/etc/systemd/system/bot-runner@.service
+/etc/systemd/system/bot-runner@.timer
+```
+
+The frozen Target-v1 service core is:
+
+```ini
+[Service]
+Type=oneshot
+User=%i
+Group=%i
+WorkingDirectory=/opt/bots/%i
+ExecStart=/opt/bots/%i/venv/bin/python /opt/bots/%i/src/job_runner.py --config /opt/bots/%i/config/config.ini
+```
+
+`%i` is the runtime instance identity. The generic timer targets
+`bot-runner@%i.service`.
+
+WP-FND-03 separates template installation from runner activation. Installing or
+verifying the templates does not authorize `enable`, `enable --now`, `start`, or
+`restart` of the generic runner. Timer cadence and `Persistent=` semantics remain
+deferred to the later runner/provider lifecycle authority.
+
+See `docs/runtime-systemd.md` for the complete WP-FND-03 contract.
+
 ## Audits
 
 The repository ships three read-only audit collectors:
@@ -89,6 +119,6 @@ They redact sensitive values, generate JSON locally and do not transmit audit re
 
 ## Installer
 
-Run `install_jr-bot.sh` from a neutral administrator account on a supported Debian/Raspberry Pi OS host. The installer creates or uses a dedicated runtime user, prepares the runtime tree, writes canonical runtime configuration and conditional runtime-secret files, installs the public scripts/audits and can enable systemd units.
+Run `install_jr-bot.sh` from a neutral administrator account on a supported Debian/Raspberry Pi OS host. The installer creates or uses a dedicated runtime user, prepares the runtime tree, writes canonical runtime configuration and conditional runtime-secret files, and installs the public scripts/audits and systemd templates. WP-FND-03 does not enable or start the generic runner timer.
 
 The job-runner backend configuration is separate from audit storage. Public-v1 local-only audit persistence does not prevent a JR-Bot runtime from connecting to a user-configured project API.

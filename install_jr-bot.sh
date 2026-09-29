@@ -3,7 +3,7 @@ set -euo pipefail
 
 # ==========================================================
 # JR-Bot Universal Installer
-# Version: 0.4.0-dev-wp-fnd-02
+# Version: 0.4.0-dev-wp-fnd-03
 # ==========================================================
 #
 # Public-v1 audit boundary:
@@ -17,7 +17,7 @@ set -euo pipefail
 #     local-only audit storage.
 # ==========================================================
 
-SCRIPT_VERSION="0.4.0-dev-wp-fnd-02"
+SCRIPT_VERSION="0.4.0-dev-wp-fnd-03"
 
 DEFAULT_PROJECT_NAME="My Project"
 DEFAULT_BOT_NAME="JRBot"
@@ -795,14 +795,16 @@ enable_persistent_journald() {
     info "Persistent journald prepared."
 }
 
-enable_systemd_units() {
+apply_systemd_install_state() {
     local instance_name="$1"
 
     sudo systemctl daemon-reload
-    sudo systemctl enable --now "bot-runner@${instance_name}.timer"
+
+    # Existing boot-audit enablement is outside the generic runner activation
+    # boundary. WP-FND-03 must not enable or start the runner timer.
     sudo systemctl enable "jrbot-boot-report-audit@${instance_name}.service"
 
-    info "systemd units enabled."
+    info "systemd templates installed. Runner timer remains disabled/stopped by WP-FND-03."
 }
 
 run_manual_runner_test() {
@@ -994,11 +996,11 @@ main() {
         warn "Persistent journald not enabled."
     fi
 
-    if confirm_default_yes "Install systemd templates and enable the runner timer / boot audit?"; then
+    if confirm_default_yes "Install systemd templates? Runner timer stays disabled/stopped; boot-audit enablement is preserved."; then
         install_systemd_templates
-        enable_systemd_units "$INSTANCE_NAME"
+        apply_systemd_install_state "$INSTANCE_NAME"
     else
-        warn "systemd units were not installed/enabled."
+        warn "systemd templates were not installed."
     fi
 
     echo
