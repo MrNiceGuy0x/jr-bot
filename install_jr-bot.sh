@@ -266,8 +266,11 @@ assert_foundation_path_safety() {
     local -a parts=()
     local -a canonical_dirs=(
         config
+        config/capabilities.d
         src
+        src/jrbot_capabilities
         scripts
+        scripts/capabilities
         audits
         docs
         docs/scripts
@@ -308,8 +311,11 @@ apply_foundation_directory_permissions() {
     local rel=""
     local -a privileged_dirs=(
         config
+        config/capabilities.d
         src
+        src/jrbot_capabilities
         scripts
+        scripts/capabilities
         audits
         docs
         docs/scripts
@@ -359,8 +365,11 @@ create_directory_structure() {
 
     sudo mkdir -p \
         "$install_dir/config" \
+        "$install_dir/config/capabilities.d" \
         "$install_dir/src" \
+        "$install_dir/src/jrbot_capabilities" \
         "$install_dir/scripts" \
+        "$install_dir/scripts/capabilities" \
         "$install_dir/audits" \
         "$install_dir/docs/scripts" \
         "$install_dir/docs/audits" \
@@ -702,7 +711,7 @@ install_public_runtime_files() {
     local install_dir="$1"
     local run_as_user="$2"
 
-    info "Installing canonical public scripts, audits and documentation..."
+    info "Installing canonical public scripts, capability framework, audits and documentation..."
 
     local scripts=(
         cancel_shutdown.sh
@@ -743,7 +752,21 @@ install_public_runtime_files() {
         audit_jr-bot-structure.md
     )
 
+    local capability_core=(
+        __init__.py
+        model.py
+        validator.py
+        loader.py
+        executor.py
+    )
+
     local name
+
+    for name in "${capability_core[@]}"; do
+        download_public_file "src/jrbot_capabilities/${name}" "$install_dir/src/jrbot_capabilities/${name}" 640 "$run_as_user"
+    done
+
+    download_public_file "docs/capability-framework.md" "$install_dir/docs/capability-framework.md" 640 "$run_as_user"
 
     for name in "${scripts[@]}"; do
         download_public_file "scripts/${name}" "$install_dir/scripts/${name}" 750 "$run_as_user"
