@@ -5,7 +5,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Optional, Sequence
 from .model import CapabilityDescriptor
-from .validator import CapabilityPolicyError, verify_script_digest
+from .validator import CapabilityPolicyError, validate_descriptor, verify_script_digest
 
 class CapabilityExecutionError(RuntimeError): pass
 
@@ -18,7 +18,9 @@ class ExecutionResult:
     stderr_truncated: bool
 
 class CapabilityExecutor:
-    def __init__(self, secret_resolver: Optional[Callable[[str], str]]=None):
+    def __init__(self, trusted_script_root: str, secret_resolver: Optional[Callable[[str], str]]=None):
+        if not isinstance(trusted_script_root, str) or not os.path.isabs(trusted_script_root): raise CapabilityPolicyError("trusted_script_root must be an absolute local path")
+        self.trusted_script_root=trusted_script_root
         self.secret_resolver=secret_resolver
 
     @staticmethod
@@ -56,6 +58,8 @@ class CapabilityExecutor:
         return out
 
     def execute(self,d: CapabilityDescriptor,params: Mapping[str,Any]) -> ExecutionResult:
+        raw={"capability_id":d.capability_id,"revision":d.revision,"script_path":d.script_path,"sha256":d.sha256,"interpreter":d.interpreter,"argv":list(d.argv),"timeout_seconds":d.timeout_seconds,"max_stdout_bytes":d.max_stdout_bytes,"max_stderr_bytes":d.max_stderr_bytes,"secret_bindings":dict(d.secret_bindings),"retry_class":d.retry_class}
+        d=validate_descriptor(raw,self.trusted_script_root)
         verify_script_digest(d)
         argv=self.build_argv(d,params)
         env={"PATH":"/usr/bin:/bin","LANG":"C.UTF-8"}

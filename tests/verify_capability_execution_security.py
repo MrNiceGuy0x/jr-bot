@@ -36,7 +36,7 @@ class FakePopen:
 with tempfile.TemporaryDirectory() as td:
     root=Path(td); script=root/'safe.sh'; script.write_text('#!/bin/sh\nprintf 1234567890; printf err >&2',encoding='utf-8')
     raw={"capability_id":"test.safe","revision":1,"script_path":str(script),"sha256":hashlib.sha256(script.read_bytes()).hexdigest(),"interpreter":"/bin/sh","argv":[{"name":"mode","type":"enum","flag":"--mode","values":["safe"]}],"timeout_seconds":5,"max_stdout_bytes":4,"max_stderr_bytes":4,"secret_bindings":{},"retry_class":"never"}
-    d=validate_descriptor(raw,str(root)); ex=CapabilityExecutor(); expected=['/bin/sh',str(script),'--mode','safe']; assert ex.build_argv(d,{"mode":"safe"})==expected
+    d=validate_descriptor(raw,str(root)); ex=CapabilityExecutor(trusted_script_root=str(root)); expected=['/bin/sh',str(script),'--mode','safe']; assert ex.build_argv(d,{"mode":"safe"})==expected
     for params in ({"argv":["sh","-c","id"]},{"command":"id"},{"mode":"safe","executable":"/bin/bash"},{"mode":"$(id)"}): reject(lambda p=params:ex.build_argv(d,p))
     with patch.object(executor_module.subprocess,'Popen',FakePopen), patch.object(executor_module.selectors,'DefaultSelector',FakeSelector):
         r=ex.execute(d,{"mode":"safe"})
@@ -45,4 +45,12 @@ with tempfile.TemporaryDirectory() as td:
     assert r.stdout==b'1234' and r.stdout_truncated
     assert r.stderr==b'err' and not r.stderr_truncated
     script.write_text('#!/bin/sh\nprintf changed',encoding='utf-8'); reject(lambda:ex.execute(d,{"mode":"safe"}))
+    outside=Path(td).parent/'cap01-a26-outside.sh'
+    outside.write_text('#!/bin/sh\nprintf must-not-run',encoding='utf-8')
+    try:
+        bypass=type(d)(capability_id='test.a26.bypass',revision=1,script_path=str(outside),sha256=hashlib.sha256(outside.read_bytes()).hexdigest(),interpreter='/bin/sh',argv=(),timeout_seconds=5,max_stdout_bytes=4,max_stderr_bytes=4,secret_bindings={},retry_class='never')
+        reject(lambda:ex.execute(bypass,{}))
+    finally:
+        outside.unlink(missing_ok=True)
+
 print('CAP01_EXECUTION_SECURITY_PASS')
