@@ -3,7 +3,7 @@ set -euo pipefail
 
 # ==========================================================
 # JR-Bot Universal Installer
-# Version: 0.4.0-dev-wp-fnd-03
+# Version: 0.4.0-dev-productive-runner
 # ==========================================================
 #
 # Public-v1 audit boundary:
@@ -17,7 +17,7 @@ set -euo pipefail
 #     local-only audit storage.
 # ==========================================================
 
-SCRIPT_VERSION="0.4.0-dev-wp-fnd-03"
+SCRIPT_VERSION="0.4.0-dev-productive-runner"
 
 DEFAULT_PROJECT_NAME="My Project"
 DEFAULT_BOT_NAME="JRBot"
@@ -578,111 +578,15 @@ EOF
 }
 
 
-create_job_runner() {
+
+install_job_runner() {
     local install_dir="$1"
     local run_as_user="$2"
 
-    info "Creating generic job_runner.py placeholder..."
+    info "Installing canonical productive public job_runner.py..."
+    download_public_file "src/job_runner.py" "$install_dir/src/job_runner.py" 640 "$run_as_user"
 
-    sudo tee "$install_dir/src/job_runner.py" >/dev/null <<'PYEOF'
-#!/usr/bin/env python3
-"""
-JR-Bot job_runner.py
-Version: 0.4.0-dev
-
-This runner currently verifies:
-- config.ini loading
-- optional --config argument
-- log writing to logs/job_runner.log
-- canonical management/database/server configuration presence
-
-The full generic job protocol is outside the public-v1 audit cleanup scope.
-"""
-
-from __future__ import annotations
-
-import argparse
-import configparser
-from datetime import datetime, timezone
-from pathlib import Path
-
-
-BASE_DIR = Path(__file__).resolve().parents[1]
-DEFAULT_CONFIG_FILE = BASE_DIR / "config" / "config.ini"
-
-
-def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="JR-Bot Runner")
-    parser.add_argument(
-        "--config",
-        default=str(DEFAULT_CONFIG_FILE),
-        help="Path to config.ini",
-    )
-    return parser.parse_args()
-
-
-def load_config(config_file: Path) -> configparser.ConfigParser:
-    config = configparser.ConfigParser()
-    read_files = config.read(config_file)
-
-    if not read_files:
-        raise FileNotFoundError(f"Config file not found or unreadable: {config_file}")
-
-    return config
-
-
-def write_log(message: str) -> None:
-    log_file = BASE_DIR / "logs" / "job_runner.log"
-    log_file.parent.mkdir(parents=True, exist_ok=True)
-
-    line = f"[{utc_now()}] {message}"
-
-    with log_file.open("a", encoding="utf-8") as f:
-        f.write(line + "\n")
-
-    print(line)
-
-
-def main() -> None:
-    args = parse_args()
-    config_file = Path(args.config).resolve()
-    config = load_config(config_file)
-
-    project_name = config.get("bot", "PROJECT_NAME", fallback="UNKNOWN")
-    bot_name = config.get("bot", "BOT_NAME", fallback="UNKNOWN")
-    instance_name = config.get("bot", "INSTANCE_NAME", fallback="UNKNOWN")
-    management_mode = config.get("bot", "MANAGEMENT_MODE", fallback="UNKNOWN")
-    database_mode = config.get("bot", "DATABASE_MODE", fallback="UNKNOWN")
-    if config.has_section("server"):
-        server_base = config.get("server", "SERVER_BASE", fallback="")
-        auth_mode = config.get("server", "AUTH_MODE", fallback="UNKNOWN")
-    else:
-        server_base = ""
-        auth_mode = "none"
-
-    write_log(
-        "JR-Bot runner start "
-        f"project={project_name} "
-        f"bot={bot_name} "
-        f"instance={instance_name} "
-        f"management_mode={management_mode} "
-        f"database_mode={database_mode} "
-        f"server_base={server_base} "
-        f"auth_mode={auth_mode} "
-        f"config={config_file}"
-    )
-
-    write_log("JR-Bot runner placeholder finished successfully")
-
-
-if __name__ == "__main__":
-    main()
-PYEOF
-
+    # Keep the frozen Foundation ownership markers explicit and regression-visible.
     sudo chown "root:${run_as_user}" "$install_dir/src/job_runner.py"
     sudo chmod 0640 "$install_dir/src/job_runner.py"
 }
@@ -1010,7 +914,7 @@ main() {
         "$AUTH_MODE" \
         "$INTERVAL_SECONDS"
 
-    create_job_runner "$INSTALL_DIR" "$RUN_AS_USER"
+    install_job_runner "$INSTALL_DIR" "$RUN_AS_USER"
     install_public_runtime_files "$INSTALL_DIR" "$RUN_AS_USER"
 
     if confirm_default_yes "Enable persistent journald?"; then
