@@ -631,7 +631,12 @@ def execute_lease(cfg: RuntimeConfig, provider: Any, lease: Mapping[str, Any]) -
     if job_type == "script":
         return _execute_script(cfg, payload)
     if job_type == "http":
-        return ExecutionOutcome("rejected", False, "http capability not implemented in current public authority", {})
+        from jrbot_http_capability import execute_guild_overview, HttpCapabilityError
+        try:
+            result = execute_guild_overview(cfg.base_dir, payload)
+        except HttpCapabilityError as exc:
+            return ExecutionOutcome("rejected", False, str(exc), {})
+        return ExecutionOutcome(result["outcome"], False, result["message"], result["result"])
     return ExecutionOutcome("rejected", False, "unknown job_type", {})
 
 
@@ -911,7 +916,7 @@ def _provider_transition(state, operation, data, instance, runner, session, now)
                         latest = due + timedelta(seconds=int((now - due).total_seconds() // schedule["seconds"]) * schedule["seconds"])
                         following = latest + timedelta(seconds=schedule["seconds"])
                     else:
-                        latest = provider_cron_next(schedule["expression"], schedule["timezone"], now, previous=True)
+                        latest = max(due, provider_cron_next(schedule["expression"], schedule["timezone"], now, previous=True))
                         following = _provider_next(schedule, latest)
                     if definition["catch_up"] == "skip_missed" and due < now:
                         slot["next_for"] = _provider_stamp(following)
@@ -975,6 +980,120 @@ def _provider_transition(state, operation, data, instance, runner, session, now)
     return response(result_state="recorded")
 
 
+# DefinitionSource is relational tbl_jobs; this cache cannot administer jobs.
+GGB_OVERVIEW_URL = 'https://www.blenk.co.at/splinterlands/API/guild_overview.php'
+JOB_DEFINITION_FIELDS = ('id', 'bot_name', 'job_key', 'job_type', 'enabled',
+                         'schedule_type', 'interval_min', 'run_at_utc', 'cron_expr',
+                         'grace_sec', 'job_group', 'config_json')
+
+
+def _db_bot(instance):
+    # Explicit legacy GGB binding, not a case-fold inferred from job data.
+    return {'ggb': 'GGB'}.get(instance, instance)
+
+
+def _sql_stamp(value):
+    return _provider_time(value).strftime('%Y-%m-%d %H:%M:%S') if value else None
+
+
+def _source_stamp(value):
+    if not isinstance(value, str) or re.fullmatch(r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}', value) is None:
+        raise ProviderStateError('JOB_SOURCE_INVALID')
+    return _provider_stamp(_provider_time(value.replace(' ', 'T') + 'Z'))
+
+
+def _source_job(row, instance, revision):
+    if row['enabled'] != 1 or not isinstance(row['config_json'], str) or len(row['config_json'].encode()) > MAX_JOB_PAYLOAD_BYTES:
+        raise ProviderStateError('JOB_SOURCE_INVALID')
+    try:
+        payload = json.loads(row['config_json'])
+    except (ValueError, TypeError) as exc:
+        raise ProviderStateError('JOB_SOURCE_INVALID') from exc
+    key = row['job_key']
+    if row['job_type'] == 'ping' and key in {'ping', 'jrbot_heartbeat'}:
+        if key == 'ping' and payload != []:
+            raise ProviderStateError('JOB_MAPPING_UNSUPPORTED')
+        if key == 'jrbot_heartbeat' and (not isinstance(payload, dict) or
+                set(payload) != {'system_job', 'required', 'locked', 'created_by', 'description'} or
+                any(payload[k] is not True for k in ('system_job', 'required', 'locked')) or
+                any(not isinstance(payload[k], str) for k in ('created_by', 'description'))):
+            raise ProviderStateError('JOB_MAPPING_UNSUPPORTED')
+        job_type, mapped = 'system', {'action': SYSTEM_HEARTBEAT_ACTION}
+    elif instance == 'ggb' and row['bot_name'] == 'GGB' and key == 'Guild Overview' and row['job_type'] == 'http' and payload == {'url': GGB_OVERVIEW_URL}:
+        job_type, mapped = 'http', {'action': 'guild_overview_refresh'}
+    else:
+        raise ProviderStateError('JOB_MAPPING_UNSUPPORTED')
+    if row['schedule_type'] == 'interval':
+        if type(row['interval_min']) is not int or row['interval_min'] < 1:
+            raise ProviderStateError('JOB_SOURCE_INVALID')
+        schedule = {'kind': 'interval', 'seconds': row['interval_min'] * 60}
+    elif row['schedule_type'] == 'cron':
+        schedule = {'kind': 'cron', 'expression': row['cron_expr'], 'timezone': 'UTC'}
+    else:
+        # No new once/catch-up workflow in this bounded gate.
+        raise ProviderStateError('JOB_MAPPING_UNSUPPORTED')
+    grace = row['grace_sec']
+    if type(grace) is not int or not 1 <= grace <= 86400:
+        raise ProviderStateError('JOB_SOURCE_INVALID')
+    return _provider_job(dict(job_id=str(row['id']), job_key=key, job_revision=revision,
+        job_type=job_type, payload=mapped, schedule=schedule,
+        start_at=_source_stamp(row['next_run_utc']), max_attempts=1,
+        retry_delay_seconds=0, lease_seconds=max(grace, 120 if job_type == 'http' else 1),
+        catch_up='coalesce_latest', enabled=True))
+
+
+def _sync_source(state, rows, instance):
+    import hashlib
+    sources = state.setdefault('sources', {})
+    seen = set()
+    if any(identity not in sources for identity in state['jobs']):
+        raise ProviderStateError('DEFINITION_SOURCE_MIGRATION_REQUIRED')
+    for row in rows:
+        if row['bot_name'] != _db_bot(instance) or type(row['id']) is not int or row['id'] < 1 or type(row['enabled']) is not int or row['enabled'] not in (0, 1):
+            raise ProviderStateError('JOB_SOURCE_INVALID')
+        identity = str(row['id']); seen.add(identity)
+        fingerprint = hashlib.sha256(_provider_json([row[k] for k in JOB_DEFINITION_FIELDS]).encode()).hexdigest()
+        old = sources.get(identity)
+        slot = state['jobs'].get(identity)
+        changed = old is None or old['fingerprint'] != fingerprint or old.get('deleted', False)
+        revision = (old['revision'] + 1 if old else 1) if changed else old['revision']
+        if row['enabled'] == 1:
+            job = _source_job(row, instance, revision)
+            if slot is None or changed:
+                if slot is None:
+                    slot = {'definition': job, 'next_for': job['start_at'], 'occurrence': None}
+                    state['jobs'][identity] = slot
+                else:
+                    slot['definition'] = job
+                    slot['next_for'] = job['start_at']
+            elif row['next_run_utc'] != old['projected_next']:
+                # Existing admin Run-now changes the anchor, not the definition.
+                slot['next_for'] = job['start_at']
+        elif slot is not None:
+            slot['definition']['enabled'] = False
+        sources[identity] = {'fingerprint': fingerprint, 'revision': revision,
+                             'projected_next': row['next_run_utc'], 'deleted': False, 'enabled': row['enabled'] == 1}
+    for identity, meta in sources.items():
+        if identity not in seen:
+            meta['deleted'] = True
+            if identity in state['jobs']:
+                state['jobs'][identity]['definition']['enabled'] = False
+
+
+SQLITE_JOBS_DDL = '''CREATE TABLE tbl_jobs (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, bot_name TEXT NOT NULL CHECK(length(bot_name) BETWEEN 1 AND 32),
+ job_key TEXT NOT NULL CHECK(length(job_key) BETWEEN 1 AND 64),
+ job_type TEXT NOT NULL DEFAULT 'ping' CHECK(job_type IN ('ping','http','shell')),
+ enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
+ schedule_type TEXT NOT NULL DEFAULT 'interval' CHECK(schedule_type IN ('interval','once','cron')),
+ interval_min INTEGER, run_at_utc TEXT, cron_expr TEXT, next_run_utc TEXT,
+ grace_sec INTEGER NOT NULL DEFAULT 60, last_dispatch_utc TEXT, last_run_utc TEXT,
+ last_ok INTEGER CHECK(last_ok IN (0,1)), last_message TEXT, last_duration_ms INTEGER,
+ locked_by TEXT, locked_until_utc TEXT, config_json TEXT NOT NULL,
+ created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ job_group TEXT DEFAULT 'default', UNIQUE(bot_name,job_key))'''
+
+
 class LocalDbProvider:
     """One transaction-locked SQLite authority; never a remote fallback."""
 
@@ -1026,6 +1145,10 @@ class LocalDbProvider:
             db.execute("CREATE TABLE jrbot_provider_dispatches (instance TEXT NOT NULL, dispatch_id TEXT NOT NULL, status TEXT NOT NULL, document TEXT NOT NULL, PRIMARY KEY(instance,dispatch_id))")
             db.execute("CREATE INDEX jrbot_active_dispatches ON jrbot_provider_dispatches(instance,status)")
             db.execute("CREATE TABLE jrbot_provider_requests (instance TEXT NOT NULL, request_key TEXT NOT NULL, dispatch_id TEXT, PRIMARY KEY(instance,request_key))")
+            db.execute(SQLITE_JOBS_DDL)
+            db.execute("CREATE INDEX idx_due ON tbl_jobs(enabled,next_run_utc)")
+            db.execute("CREATE INDEX idx_locked ON tbl_jobs(locked_until_utc)")
+            db.execute("CREATE INDEX idx_schedule ON tbl_jobs(schedule_type,run_at_utc)")
             db.execute("CREATE TABLE tbl_bot_status (bot_name TEXT PRIMARY KEY, last_seen TEXT NOT NULL, last_status TEXT NOT NULL DEFAULT 'yellow', last_alert_at TEXT)")
             state = {"version": 1, "instance": cfg.instance, "jobs": {}, "dispatches": {}, "requests": {}}
             db.execute("INSERT INTO jrbot_provider_state VALUES (?,?)", (cfg.instance, _provider_json(state)))
@@ -1042,12 +1165,17 @@ class LocalDbProvider:
         db = sqlite3.connect(self.path.as_uri() + "?mode=rw", uri=True, timeout=5)
         try:
             db.execute("BEGIN IMMEDIATE")
-            expected_keys = {"jrbot_provider_state": ["instance"], "jrbot_provider_dispatches": ["instance", "dispatch_id"], "jrbot_provider_requests": ["instance", "request_key"], "tbl_bot_status": ["bot_name"]}
+            if operation == "put_job":
+                raise ProviderStateError("DEFINITION_SOURCE_ONLY")
+            expected_keys = {"jrbot_provider_state": ["instance"], "jrbot_provider_dispatches": ["instance", "dispatch_id"], "jrbot_provider_requests": ["instance", "request_key"], "tbl_bot_status": ["bot_name"], "tbl_jobs": ["id"]}
             for table, expected in expected_keys.items():
                 columns = db.execute("PRAGMA table_info(" + table + ")").fetchall()
                 actual = [r[1] for r in sorted(columns, key=lambda r: r[5]) if r[5]]
                 if actual != expected:
                     raise ProviderStateError("PROVIDER_SCHEMA_INVALID")
+            indexes = db.execute("PRAGMA index_list(tbl_jobs)").fetchall()
+            if not any(index[2] and [r[2] for r in db.execute('PRAGMA index_info("' + index[1].replace('"', '""') + '")')] == ['bot_name', 'job_key'] for index in indexes):
+                raise ProviderStateError("PROVIDER_SCHEMA_INVALID")
             row = db.execute("SELECT document FROM jrbot_provider_state WHERE instance=?", (self.cfg.instance,)).fetchone()
             if row is None or len(row[0].encode()) > PROVIDER_STATE_LIMIT:
                 raise ProviderStateError("PROVIDER_STATE_INVALID")
@@ -1075,16 +1203,48 @@ class LocalDbProvider:
                 if found is not None:
                     state["dispatches"][requested_dispatch] = json.loads(found[0])
             now = self.clock() if self.clock else _provider_time(db.execute("SELECT strftime('%Y-%m-%dT%H:%M:%SZ','now')").fetchone()[0])
+            db.row_factory = sqlite3.Row
+            rows = [dict(r) for r in db.execute("SELECT * FROM tbl_jobs WHERE bot_name=? COLLATE BINARY ORDER BY id", (_db_bot(self.cfg.instance),))]
+            _sync_source(state, rows, self.cfg.instance)
+            before_status = {k: r["status"] for k, r in state["dispatches"].items()}
             if operation == "inspect":
                 result = state
             elif operation == "presence":
                 if data:
                     raise ProviderStateError("PRESENCE_SCOPE_INVALID")
-                db.execute("INSERT INTO tbl_bot_status(bot_name,last_seen) VALUES (?,?) ON CONFLICT(bot_name) DO UPDATE SET last_seen=excluded.last_seen", (self.cfg.instance, _provider_stamp(now)))
+                db.execute("INSERT INTO tbl_bot_status(bot_name,last_seen) VALUES (?,?) ON CONFLICT(bot_name) DO UPDATE SET last_seen=excluded.last_seen", (_db_bot(self.cfg.instance), _sql_stamp(_provider_stamp(now))))
                 result = {"protocol": RUNTIME_PROTOCOL, "ok": True, "server_time": _provider_stamp(now), "presence_state": "recorded"}
             else:
-                result = _provider_transition(state, operation, data, self.cfg.instance, self.runner_id, self.session_id, now)
+                blocked = []
+                if operation == "lease":
+                    for row in rows:
+                        slot = state["jobs"].get(str(row["id"]))
+                        if slot and slot["definition"]["enabled"] and row["locked_by"] and row["locked_until_utc"] and _provider_time(_source_stamp(row["locked_until_utc"])) > now and row["locked_by"] not in state["dispatches"]:
+                            slot["definition"]["enabled"] = False
+                            blocked.append(slot)
+                try:
+                    result = _provider_transition(state, operation, data, self.cfg.instance, self.runner_id, self.session_id, now)
+                finally:
+                    for slot in blocked:
+                        slot["definition"]["enabled"] = True
+            for identity, slot in state["jobs"].items():
+                meta = state["sources"][identity]
+                if not meta["deleted"] and meta["enabled"]:
+                    next_sql = _sql_stamp(slot["next_for"])
+                    db.execute("UPDATE tbl_jobs SET next_run_utc=? WHERE id=? AND bot_name=? COLLATE BINARY", (next_sql, int(identity), _db_bot(self.cfg.instance)))
+                    meta["projected_next"] = next_sql
             for identity, record in state["dispatches"].items():
+                lease = record["lease"]
+                if identity not in before_status:
+                    db.execute("UPDATE tbl_jobs SET last_dispatch_utc=?,locked_by=?,locked_until_utc=? WHERE id=? AND bot_name=? COLLATE BINARY", (_sql_stamp(_provider_stamp(now)), identity, _sql_stamp(lease["lease_expires_at"]), int(lease["job_id"]), _db_bot(self.cfg.instance)))
+                elif record["status"] == "active":
+                    db.execute("UPDATE tbl_jobs SET locked_until_utc=? WHERE id=? AND bot_name=? COLLATE BINARY AND locked_by=?", (_sql_stamp(lease["lease_expires_at"]), int(lease["job_id"]), _db_bot(self.cfg.instance), identity))
+                elif before_status[identity] == "active":
+                    if record["report"] is not None:
+                        report = json.loads(record["report"])
+                        duration = int((_provider_time(report["finished_at"]) - _provider_time(report["started_at"])).total_seconds() * 1000)
+                        db.execute("UPDATE tbl_jobs SET last_run_utc=?,last_ok=?,last_message=?,last_duration_ms=? WHERE id=? AND bot_name=? COLLATE BINARY AND locked_by=?", (_sql_stamp(report["finished_at"]), int(report["outcome"] == "succeeded"), report["message"], min(duration, 2147483647), int(lease["job_id"]), _db_bot(self.cfg.instance), identity))
+                    db.execute("UPDATE tbl_jobs SET locked_by=NULL,locked_until_utc=NULL WHERE id=? AND bot_name=? COLLATE BINARY AND locked_by=?", (int(lease["job_id"]), _db_bot(self.cfg.instance), identity))
                 db.execute("INSERT INTO jrbot_provider_dispatches VALUES (?,?,?,?) ON CONFLICT(instance,dispatch_id) DO UPDATE SET status=excluded.status,document=excluded.document", (self.cfg.instance, identity, record["status"], _provider_json(record)))
             for key, identity in state["requests"].items():
                 db.execute("INSERT INTO jrbot_provider_requests VALUES (?,?,?) ON CONFLICT(instance,request_key) DO NOTHING", (self.cfg.instance, key, identity))

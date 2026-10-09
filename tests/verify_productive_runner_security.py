@@ -125,7 +125,13 @@ assert "/runtime/jobs/report" in source
 assert "/runtime/presence" in source
 assert "Authorization" in source
 assert "Bearer " in source
-assert "http capability not implemented" in source
+# HTTP is now restricted to a privileged registered template.
+assert "execute_guild_overview" in source
+with tempfile.TemporaryDirectory() as td:
+    cfg = job_runner.RuntimeConfig('ggb', 'standalone', 'local_pi', Path(td), '', 'none')
+    for payload in ({'url':'https://example.invalid'}, {'action':'guild_overview_refresh','url':'https://example.invalid'}, {'action':'unknown'}):
+        outcome = job_runner.execute_lease(cfg, object(), {'job_type':'http','payload':payload})
+        assert outcome.outcome == 'rejected' and outcome.retryable is False
 assert 'SYSTEM_HEARTBEAT_ACTION = "system.jrbot_heartbeat"' in source
 assert "TRANSPORT_RETRY_ATTEMPTS = 2" in source
 assert "MAX_RESPONSE_BODY_BYTES" in source

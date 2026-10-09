@@ -503,3 +503,13 @@ with tempfile.TemporaryDirectory() as td:
         raise AssertionError("oversized response must fail closed")
 
 print("PRODUCTIVE_RUNNER_PROTOCOL_PASS")
+
+# HTTP dispatch uses only the local registered template, never a job URL.
+from unittest.mock import patch
+with tempfile.TemporaryDirectory() as td:
+    cfg = job_runner.RuntimeConfig('ggb', 'standalone', 'local_pi', Path(td), '', 'none')
+    with patch('jrbot_http_capability.execute_guild_overview', return_value={'outcome':'failed','message':'unconfirmed','result':{'confirmation':'unconfirmed'}}) as execute:
+        result = job_runner.execute_lease(cfg, object(), {'job_type':'http','payload':{'action':'guild_overview_refresh'}})
+        assert result.outcome == 'failed' and result.retryable is False
+        execute.assert_called_once_with(cfg.base_dir, {'action':'guild_overview_refresh'})
+print('PRODUCTIVE_RUNNER_HTTP_DISPATCH_NO_AUTORETRY=PASS')
