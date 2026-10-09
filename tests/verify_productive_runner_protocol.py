@@ -216,10 +216,10 @@ BASE_DIR = {base}
     cfg = job_runner.load_runtime_config(cfg_path, runtime_base=base)
     try:
         job_runner.run_once(cfg)
-    except job_runner.ProviderNotImplemented:
+    except job_runner.ConfigError:
         pass
     else:
-        raise AssertionError("local_pi must fail closed until provider is implemented")
+        raise AssertionError("local_pi must fail closed without an explicitly prepared authority")
 
 
 with tempfile.TemporaryDirectory() as td:

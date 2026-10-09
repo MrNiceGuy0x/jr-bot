@@ -9,7 +9,7 @@ import re
 import sys
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
@@ -173,6 +173,7 @@ def _json_size_and_shape(value: Any, label: str, max_bytes: int) -> int:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="JR-Bot productive generic runner")
     parser.add_argument("--config", required=True, help="Path to canonical config.ini")
+    parser.add_argument("--prepare-local-db", action="store_true", help="Explicit local authority preparation; no runner activation")
     return parser.parse_args()
 
 
@@ -511,7 +512,7 @@ class RemoteHandlerProvider:
             "finished_at": utc_now(),
             "outcome": outcome.outcome,
             "retryable": outcome.retryable,
-            "message": outcome.message[:512],
+            "message": _safe_message(outcome.message),
             "result": result,
         }
         response = self._post(
@@ -547,7 +548,7 @@ class RemoteHandlerProvider:
 
 def _safe_message(text: str) -> str:
     compact = " ".join(str(text).split())
-    return compact[:512]
+    return compact.encode("utf-8")[:512].decode("utf-8", errors="ignore")
 
 
 def _load_script_descriptor(cfg: RuntimeConfig, action: str):
@@ -566,7 +567,7 @@ def _load_script_descriptor(cfg: RuntimeConfig, action: str):
     return found[0]
 
 
-def _execute_system(provider: RemoteHandlerProvider, action: str) -> ExecutionOutcome:
+def _execute_system(provider: Any, action: str) -> ExecutionOutcome:
     if action != SYSTEM_HEARTBEAT_ACTION:
         return ExecutionOutcome("rejected", False, "unknown system action", {})
     presence = provider.write_self_presence()
@@ -619,7 +620,7 @@ def _execute_script(cfg: RuntimeConfig, payload: Mapping[str, Any]) -> Execution
     )
 
 
-def execute_lease(cfg: RuntimeConfig, provider: RemoteHandlerProvider, lease: Mapping[str, Any]) -> ExecutionOutcome:
+def execute_lease(cfg: RuntimeConfig, provider: Any, lease: Mapping[str, Any]) -> ExecutionOutcome:
     job_type = lease.get("job_type")
     payload = lease.get("payload")
     if not isinstance(payload, Mapping):
@@ -678,11 +679,12 @@ def validate_lease(lease: Mapping[str, Any], server_time_value: Any) -> None:
 
 def run_once(cfg: RuntimeConfig, session: Optional[requests.Session] = None) -> int:
     if cfg.database_mode == "local_pi":
-        raise ProviderNotImplemented("DATABASE_MODE=local_pi productive provider is not implemented")
-
+        # Validate canonical local storage before RunnerIdentity can write state.
+        LocalDbProvider(cfg, str(uuid.uuid4()), str(uuid.uuid4()))
     runner_id = RunnerIdentity(cfg.base_dir / "state").load_or_create()
     session_id = str(uuid.uuid4())
-    provider = RemoteHandlerProvider(cfg, runner_id, session_id, session=session)
+    provider = (LocalDbProvider(cfg, runner_id, session_id) if cfg.database_mode == "local_pi"
+                else RemoteHandlerProvider(cfg, runner_id, session_id, session=session))
 
     lease_response = provider.lease()
     lease = lease_response.get("lease")
@@ -712,7 +714,409 @@ def main() -> int:
     config_path = Path(args.config)
     runtime_base = Path(__file__).resolve().parents[1]
     cfg = load_runtime_config(config_path, runtime_base=runtime_base)
+    if args.prepare_local_db:
+        LocalDbProvider.prepare(cfg)
+        return 0
     return run_once(cfg)
+
+
+# WP-PRV-01: the local provider is part of the existing trusted runner payload.
+PROVIDER_STATE_LIMIT = 4 * 1024 * 1024
+
+
+class ProviderStateError(RunnerError):
+    pass
+
+
+def _provider_json(value):
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
+def _provider_time(value):
+    return _parse_rfc3339_utc(value, "provider timestamp")
+
+
+def _provider_stamp(value):
+    return value.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _cron_fields(expression):
+    fields = expression.split()
+    if len(fields) != 5:
+        raise ProviderStateError("CRON_INVALID")
+    values = []
+    for field, low, high in zip(fields, (0, 0, 1, 1, 0), (59, 23, 31, 12, 7)):
+        selected = set()
+        for item in field.split(","):
+            match = re.fullmatch(r"(\*|\d+(?:-\d+)?)(?:/(\d+))?", item)
+            if match is None:
+                raise ProviderStateError("CRON_INVALID")
+            term, step_text = match.groups()
+            step = int(step_text or 1)
+            if step < 1 or step > high - low + 1:
+                raise ProviderStateError("CRON_INVALID")
+            if term == "*":
+                start, end = low, high
+            elif "-" in term:
+                start, end = map(int, term.split("-"))
+            else:
+                start = int(term)
+                end = high if step_text else start
+            if not low <= start <= end <= high:
+                raise ProviderStateError("CRON_INVALID")
+            selected.update(range(start, end + 1, step))
+        values.append(selected)
+    values[4] = {v % 7 for v in values[4]}
+    return fields, values
+
+
+def provider_cron_next(expression, zone_name, after, *, previous=False):
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+    fields, values = _cron_fields(expression)
+    try:
+        zone = ZoneInfo(zone_name)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise ProviderStateError("CRON_TIMEZONE_INVALID") from exc
+    # Generate local wall times, then round-trip both folds. This excludes gaps
+    # and preserves both UTC occurrences in an autumn fold.
+    day = after.astimezone(zone).date()
+    for offset in range(366 * 8):
+        date = day + timedelta(days=-offset if previous else offset)
+        if date.month not in values[3]:
+            continue
+        dom, dow = date.day in values[2], (date.weekday() + 1) % 7 in values[4]
+        if fields[2] == "*":
+            day_ok = dow
+        elif fields[4] == "*":
+            day_ok = dom
+        else:
+            day_ok = dom or dow
+        if not day_ok:
+            continue
+        candidates = set()
+        for hour in sorted(values[1]):
+            for minute in sorted(values[0]):
+                wall = datetime(date.year, date.month, date.day, hour, minute)
+                for fold in (0, 1):
+                    utc = wall.replace(tzinfo=zone, fold=fold).astimezone(timezone.utc)
+                    if (utc <= after if previous else utc > after) and utc.astimezone(zone).replace(tzinfo=None) == wall:
+                        candidates.add(utc)
+        if candidates:
+            return max(candidates) if previous else min(candidates)
+    raise ProviderStateError("CRON_NO_OCCURRENCE_IN_BOUND")
+
+
+def _provider_next(schedule, after):
+    if schedule["kind"] == "once":
+        return None
+    if schedule["kind"] == "interval":
+        return after + timedelta(seconds=schedule["seconds"])
+    return provider_cron_next(schedule["expression"], schedule["timezone"], after)
+
+
+def _provider_job(job):
+    required = {"job_id", "job_key", "job_revision", "job_type", "payload", "schedule", "start_at", "max_attempts", "retry_delay_seconds", "lease_seconds", "catch_up", "enabled"}
+    if not isinstance(job, Mapping) or set(job) != required:
+        raise ProviderStateError("JOB_INVALID")
+    _require_bounded_string(job["job_id"], "job_id", MAX_JOB_ID_BYTES)
+    _require_bounded_string(job["job_key"], "job_key", MAX_JOB_KEY_BYTES)
+    _require_int(job["job_revision"], "job_revision", 1, MAX_ATTEMPTS)
+    if job["job_type"] not in {"system", "script", "http"} or not isinstance(job["payload"], Mapping):
+        raise ProviderStateError("JOB_INVALID")
+    _json_size_and_shape(job["payload"], "payload", MAX_JOB_PAYLOAD_BYTES)
+    if type(job["enabled"]) is not bool:
+        raise ProviderStateError("JOB_INVALID")
+    _provider_time(job["start_at"])
+    for field, minimum, maximum in (("max_attempts", 1, MAX_ATTEMPTS), ("retry_delay_seconds", 0, 86400), ("lease_seconds", 1, 86400)):
+        _require_int(job[field], field, minimum, maximum)
+    if job["catch_up"] not in {"coalesce_latest", "skip_missed"}:
+        raise ProviderStateError("JOB_INVALID")
+    schedule = job["schedule"]
+    if not isinstance(schedule, Mapping):
+        raise ProviderStateError("JOB_INVALID")
+    if schedule.get("kind") == "once" and set(schedule) == {"kind"}:
+        pass
+    elif schedule.get("kind") == "interval" and set(schedule) == {"kind", "seconds"}:
+        _require_int(schedule["seconds"], "seconds", 1, 31536000)
+    elif schedule.get("kind") == "cron" and set(schedule) == {"kind", "expression", "timezone"}:
+        _require_bounded_string(schedule["expression"], "expression", 100)
+        _require_bounded_string(schedule["timezone"], "timezone", 128)
+        provider_cron_next(schedule["expression"], schedule["timezone"], _provider_time(job["start_at"]))
+    else:
+        raise ProviderStateError("JOB_INVALID")
+    return json.loads(_provider_json(job))
+
+
+def _provider_transition(state, operation, data, instance, runner, session, now):
+    def response(**extra):
+        return {"protocol": RUNTIME_PROTOCOL, "ok": True, "server_time": _provider_stamp(now), **extra}
+
+    def finish(record, outcome, retryable):
+        slot = state["jobs"][record["lease"]["job_id"]]
+        occurrence = slot["occurrence"]
+        definition = occurrence["definition"]
+        if outcome == "failed" and retryable and occurrence["attempt"] < definition["max_attempts"]:
+            occurrence["retry_at"] = _provider_stamp(now + timedelta(seconds=definition["retry_delay_seconds"]))
+        else:
+            slot["occurrence"] = None
+
+    for record in state["dispatches"].values():
+        if record["status"] == "active" and _provider_time(record["lease"]["lease_expires_at"]) <= now:
+            record["status"] = "expired"
+            finish(record, "failed", True)
+
+    if operation == "put_job":
+        job = _provider_job(data)
+        existing = state["jobs"].get(job["job_id"])
+        if existing and job["job_revision"] <= existing["definition"]["job_revision"]:
+            raise ProviderStateError("JOB_REVISION_CONFLICT")
+        if any(k != job["job_id"] and v["definition"]["job_key"] == job["job_key"] for k, v in state["jobs"].items()):
+            raise ProviderStateError("JOB_KEY_CONFLICT")
+        first = _provider_time(job["start_at"])
+        if job["schedule"]["kind"] == "cron":
+            first = _provider_next(job["schedule"], first - timedelta(seconds=1))
+        if existing and existing["occurrence"] is not None:
+            existing["definition"] = job
+            existing["next_for"] = _provider_stamp(first)
+        else:
+            state["jobs"][job["job_id"]] = {"definition": job, "next_for": _provider_stamp(first), "occurrence": None}
+        return response(job_state="recorded")
+
+    if operation == "lease":
+        request = _require_uuid4(data["lease_request_id"], "lease_request_id")
+        request_key = runner + "/" + session + "/" + request
+        if request_key in state["requests"]:
+            dispatch = state["requests"][request_key]
+            if dispatch is None:
+                return response(lease=None, retry_after_seconds=60)
+            record = state["dispatches"][dispatch]
+            if record["status"] != "active":
+                raise ProviderStateError("DISPATCH_STALE")
+            return response(lease=record["lease"])
+        for job_id in sorted(state["jobs"]):
+            slot = state["jobs"][job_id]
+            if any(r["status"] == "active" and r["lease"]["job_id"] == job_id for r in state["dispatches"].values()):
+                continue
+            occurrence = slot["occurrence"]
+            definition = slot["definition"]
+            if not definition["enabled"]:
+                continue
+            if occurrence is None:
+                due = _provider_time(slot["next_for"]) if slot["next_for"] else None
+                if due is None or due > now:
+                    continue
+                schedule = definition["schedule"]
+                if schedule["kind"] != "once":
+                    if schedule["kind"] == "interval":
+                        latest = due + timedelta(seconds=int((now - due).total_seconds() // schedule["seconds"]) * schedule["seconds"])
+                        following = latest + timedelta(seconds=schedule["seconds"])
+                    else:
+                        latest = provider_cron_next(schedule["expression"], schedule["timezone"], now, previous=True)
+                        following = _provider_next(schedule, latest)
+                    if definition["catch_up"] == "skip_missed" and due < now:
+                        slot["next_for"] = _provider_stamp(following)
+                        continue
+                    due = latest
+                else:
+                    following = None
+                occurrence = {"scheduled_for": _provider_stamp(due), "attempt": 0, "retry_at": _provider_stamp(due), "definition": json.loads(_provider_json(definition))}
+                slot["occurrence"] = occurrence
+                slot["next_for"] = _provider_stamp(following) if following else None
+            if _provider_time(occurrence["retry_at"]) > now:
+                continue
+            definition = occurrence["definition"]
+            occurrence["attempt"] += 1
+            dispatch = str(uuid.uuid4())
+            lease = {k: definition[k] for k in ("job_id", "job_key", "job_revision", "job_type", "payload", "max_attempts")}
+            lease.update(dispatch_id=dispatch, scheduled_for=occurrence["scheduled_for"], attempt=occurrence["attempt"], lease_expires_at=_provider_stamp(now + timedelta(seconds=definition["lease_seconds"])))
+            state["dispatches"][dispatch] = {"lease": lease, "runner": runner, "session": session, "run": None, "status": "active", "lease_seconds": definition["lease_seconds"], "report": None}
+            state["requests"][request_key] = dispatch
+            return response(lease=lease)
+        state["requests"][request_key] = None
+        return response(lease=None, retry_after_seconds=60)
+
+    if operation not in {"renew", "report"}:
+        raise ProviderStateError("OPERATION_INVALID")
+    dispatch = _require_uuid4(data["dispatch_id"], "dispatch_id")
+    run = _require_uuid4(data["run_id"], "run_id")
+    record = state["dispatches"].get(dispatch)
+    if record is None:
+        raise ProviderStateError("DISPATCH_STALE")
+    if record["runner"] != runner or record["session"] != session or record["run"] not in (None, run):
+        raise ProviderStateError("DISPATCH_BINDING_MISMATCH")
+    if operation == "report":
+        required = {"protocol", "instance", "runner_id", "session_id", "job_id", "job_key", "job_revision", "dispatch_id", "run_id", "scheduled_for", "attempt", "started_at", "finished_at", "outcome", "retryable", "message", "result"}
+        if set(data) != required or data["protocol"] != RUNTIME_PROTOCOL or data["instance"] != instance or data["runner_id"] != runner or data["session_id"] != session:
+            raise ProviderStateError("REPORT_INVALID")
+        for field in ("job_id", "job_key", "job_revision", "scheduled_for", "attempt"):
+            if type(data[field]) is not type(record["lease"][field]) or data[field] != record["lease"][field]:
+                raise ProviderStateError("DISPATCH_BINDING_MISMATCH")
+        if data["outcome"] not in {"succeeded", "failed", "rejected"} or type(data["retryable"]) is not bool or not isinstance(data["result"], Mapping):
+            raise ProviderStateError("REPORT_INVALID")
+        if not isinstance(data["message"], str) or len(data["message"].encode()) > 512:
+            raise ProviderStateError("REPORT_INVALID")
+        if _provider_time(data["finished_at"]) < _provider_time(data["started_at"]):
+            raise ProviderStateError("REPORT_INVALID")
+        _json_size_and_shape(data["result"], "result", MAX_RESULT_JSON_BYTES)
+        canonical = _provider_json(data)
+        if record["report"] is not None:
+            if record["report"] != canonical:
+                raise ProviderStateError("REPORT_CONFLICT")
+            return response(result_state="already_recorded")
+    if record["status"] != "active":
+        raise ProviderStateError("DISPATCH_STALE")
+    record["run"] = run
+    if operation == "renew":
+        record["lease"]["lease_expires_at"] = _provider_stamp(now + timedelta(seconds=record["lease_seconds"]))
+        return response(lease_expires_at=record["lease"]["lease_expires_at"])
+    record["report"] = canonical
+    record["status"] = "completed"
+    finish(record, data["outcome"], data["retryable"])
+    return response(result_state="recorded")
+
+
+class LocalDbProvider:
+    """One transaction-locked SQLite authority; never a remote fallback."""
+
+    def __init__(self, cfg, runner_id, session_id, *, clock=None):
+        if cfg.database_mode != "local_pi":
+            raise ConfigError("LocalDbProvider requires DATABASE_MODE=local_pi")
+        if re.fullmatch(r"[a-z](?:[a-z0-9_-]{0,30}[a-z0-9])?", cfg.instance) is None:
+            raise ConfigError("INSTANCE_INVALID")
+        self.cfg = cfg
+        self.runner_id = _require_uuid4(runner_id, "runner_id")
+        self.session_id = _require_uuid4(session_id, "session_id")
+        self.clock = clock  # trusted test/embedding hook, never read from config or wire
+        self.path = cfg.base_dir / "state" / "local_db" / "runtime.sqlite3"
+        self._check_path()
+        if self.path.is_file():
+            info = self.path.stat()
+            if info.st_uid != os.geteuid() or info.st_mode & 0o022:
+                raise ConfigError("local DB ownership/permissions unsafe")
+        if not self.path.is_file():
+            raise ConfigError("local DB missing; explicit --prepare-local-db required")
+
+    def _check_path(self):
+        for path in (self.cfg.base_dir, self.cfg.base_dir / "state", self.path.parent, self.path):
+            if path.is_symlink():
+                raise ConfigError("local DB path must not contain symlinks")
+
+    @classmethod
+    def prepare(cls, cfg):
+        import sqlite3
+        if cfg.database_mode != "local_pi":
+            raise ConfigError("preparation requires DATABASE_MODE=local_pi")
+        if re.fullmatch(r"[a-z](?:[a-z0-9_-]{0,30}[a-z0-9])?", cfg.instance) is None:
+            raise ConfigError("INSTANCE_INVALID")
+        path = cfg.base_dir / "state" / "local_db" / "runtime.sqlite3"
+        for item in (cfg.base_dir, cfg.base_dir / "state", path.parent, path):
+            if item.is_symlink():
+                raise ConfigError("local DB path must not contain symlinks")
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if path.exists():
+            provider = cls(cfg, str(uuid.uuid4()), str(uuid.uuid4()))
+            provider._operation("inspect", {})
+            return  # never reseed or replace an existing authority
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        os.close(fd)
+        db = sqlite3.connect(path)
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            db.execute("CREATE TABLE jrbot_provider_state (instance TEXT PRIMARY KEY, document TEXT NOT NULL)")
+            db.execute("CREATE TABLE jrbot_provider_dispatches (instance TEXT NOT NULL, dispatch_id TEXT NOT NULL, status TEXT NOT NULL, document TEXT NOT NULL, PRIMARY KEY(instance,dispatch_id))")
+            db.execute("CREATE INDEX jrbot_active_dispatches ON jrbot_provider_dispatches(instance,status)")
+            db.execute("CREATE TABLE jrbot_provider_requests (instance TEXT NOT NULL, request_key TEXT NOT NULL, dispatch_id TEXT, PRIMARY KEY(instance,request_key))")
+            db.execute("CREATE TABLE tbl_bot_status (bot_name TEXT PRIMARY KEY, last_seen TEXT NOT NULL, last_status TEXT NOT NULL DEFAULT 'yellow', last_alert_at TEXT)")
+            state = {"version": 1, "instance": cfg.instance, "jobs": {}, "dispatches": {}, "requests": {}}
+            db.execute("INSERT INTO jrbot_provider_state VALUES (?,?)", (cfg.instance, _provider_json(state)))
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+    def _operation(self, operation, data):
+        import sqlite3
+        self._check_path()
+        db = sqlite3.connect(self.path.as_uri() + "?mode=rw", uri=True, timeout=5)
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            expected_keys = {"jrbot_provider_state": ["instance"], "jrbot_provider_dispatches": ["instance", "dispatch_id"], "jrbot_provider_requests": ["instance", "request_key"], "tbl_bot_status": ["bot_name"]}
+            for table, expected in expected_keys.items():
+                columns = db.execute("PRAGMA table_info(" + table + ")").fetchall()
+                actual = [r[1] for r in sorted(columns, key=lambda r: r[5]) if r[5]]
+                if actual != expected:
+                    raise ProviderStateError("PROVIDER_SCHEMA_INVALID")
+            row = db.execute("SELECT document FROM jrbot_provider_state WHERE instance=?", (self.cfg.instance,)).fetchone()
+            if row is None or len(row[0].encode()) > PROVIDER_STATE_LIMIT:
+                raise ProviderStateError("PROVIDER_STATE_INVALID")
+            state = json.loads(row[0])
+            if type(state.get("version")) is not int or state.get("version") != 1 or state.get("instance") != self.cfg.instance or any(not isinstance(state.get(k), dict) for k in ("jobs", "dispatches", "requests")):
+                raise ProviderStateError("PROVIDER_STATE_INVALID")
+            # History is durable in per-identity rows, not an ever-growing document.
+            state["dispatches"] = {r[0]: json.loads(r[1]) for r in db.execute("SELECT dispatch_id,document FROM jrbot_provider_dispatches WHERE instance=? AND status='active'", (self.cfg.instance,))}
+            state["requests"] = {}
+            if operation == "lease":
+                request = _require_uuid4(data["lease_request_id"], "lease_request_id")
+                key = self.runner_id + "/" + self.session_id + "/" + request
+                found = db.execute("SELECT dispatch_id FROM jrbot_provider_requests WHERE instance=? AND request_key=?", (self.cfg.instance, key)).fetchone()
+                if found is not None:
+                    state["requests"][key] = found[0]
+                    requested_dispatch = found[0]
+                else:
+                    requested_dispatch = None
+            elif operation in {"report", "renew"}:
+                requested_dispatch = _require_uuid4(data["dispatch_id"], "dispatch_id")
+            else:
+                requested_dispatch = None
+            if requested_dispatch and requested_dispatch not in state["dispatches"]:
+                found = db.execute("SELECT document FROM jrbot_provider_dispatches WHERE instance=? AND dispatch_id=?", (self.cfg.instance, requested_dispatch)).fetchone()
+                if found is not None:
+                    state["dispatches"][requested_dispatch] = json.loads(found[0])
+            now = self.clock() if self.clock else _provider_time(db.execute("SELECT strftime('%Y-%m-%dT%H:%M:%SZ','now')").fetchone()[0])
+            if operation == "inspect":
+                result = state
+            elif operation == "presence":
+                if data:
+                    raise ProviderStateError("PRESENCE_SCOPE_INVALID")
+                db.execute("INSERT INTO tbl_bot_status(bot_name,last_seen) VALUES (?,?) ON CONFLICT(bot_name) DO UPDATE SET last_seen=excluded.last_seen", (self.cfg.instance, _provider_stamp(now)))
+                result = {"protocol": RUNTIME_PROTOCOL, "ok": True, "server_time": _provider_stamp(now), "presence_state": "recorded"}
+            else:
+                result = _provider_transition(state, operation, data, self.cfg.instance, self.runner_id, self.session_id, now)
+            for identity, record in state["dispatches"].items():
+                db.execute("INSERT INTO jrbot_provider_dispatches VALUES (?,?,?,?) ON CONFLICT(instance,dispatch_id) DO UPDATE SET status=excluded.status,document=excluded.document", (self.cfg.instance, identity, record["status"], _provider_json(record)))
+            for key, identity in state["requests"].items():
+                db.execute("INSERT INTO jrbot_provider_requests VALUES (?,?,?) ON CONFLICT(instance,request_key) DO NOTHING", (self.cfg.instance, key, identity))
+            stored = {**state, "dispatches": {}, "requests": {}}
+            document = _provider_json(stored)
+            if len(document.encode()) > PROVIDER_STATE_LIMIT:
+                raise ProviderStateError("PROVIDER_STATE_CAPACITY_EXCEEDED")
+            db.execute("UPDATE jrbot_provider_state SET document=? WHERE instance=?", (document, self.cfg.instance))
+            db.commit()
+            return result
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+    def put_job(self, job):
+        return self._operation("put_job", job)
+
+    def lease(self, lease_request_id=None):
+        return self._operation("lease", {"lease_request_id": lease_request_id or str(uuid.uuid4())})
+
+    def renew(self, dispatch_id, run_id):
+        return self._operation("renew", {"dispatch_id": dispatch_id, "run_id": run_id})
+
+    def report(self, lease, run_id, started_at, outcome):
+        data = {k: lease[k] for k in ("job_id", "job_key", "job_revision", "dispatch_id", "scheduled_for", "attempt")}
+        data.update(protocol=RUNTIME_PROTOCOL, instance=self.cfg.instance, runner_id=self.runner_id, session_id=self.session_id, run_id=run_id, started_at=started_at, finished_at=utc_now(), outcome=outcome.outcome, retryable=outcome.retryable, message=_safe_message(outcome.message), result=dict(outcome.result))
+        return self._operation("report", data)
+
+    def write_self_presence(self):
+        return self._operation("presence", {})
 
 
 if __name__ == "__main__":

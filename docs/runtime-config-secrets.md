@@ -106,3 +106,15 @@ audit credential provisioning
 
 A Private integration may supply authoritative values to this same local
 contract, but must not create a second generic configuration model.
+
+## WP-PRV-01 local provider storage
+
+DATABASE_MODE=local_pi selects SQLite at
+/opt/bots/<instance>/state/local_db/runtime.sqlite3. Explicitly prepare it using
+the canonical runner's --prepare-local-db flag as the authorized instance user.
+Preparation exits without activation; an existing authority is not overwritten.
+Normal run_once does not create or migrate a missing database. No [server]
+section, SERVER_TOKEN, PING_TOKEN or DB-password slot is required locally.
+DATABASE_MODE=external keeps the HTTPS Project Handler family and never uses
+this local DB as a fallback. See runtime-providers.md for contracts and the
+separate WP-RUN-02/integration acceptance boundary.
