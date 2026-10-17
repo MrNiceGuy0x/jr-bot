@@ -1,3 +1,5 @@
+> Documentation reconciliation, 2026-10-17: see [local SQLite lifecycle](local-sqlite-lifecycle.md) for current table creation, explicit preparation, installer gaps and timeout limitations. The logging extension remains proposed; durable dispatch history is not a `tbl_job_log` implementation. Historical gate-specific wording below does not grant deployment permission.
+
 # Relational DefinitionSource correction candidate
 
 `tbl_jobs` is the only administrative definition source for SQLite and external
