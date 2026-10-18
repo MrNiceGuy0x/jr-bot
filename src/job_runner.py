@@ -1281,3 +1281,22 @@ class LocalDbProvider:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+# Opt-in isolated runtime/2 foundation. main()/run_once() still use runtime/1.
+# No automatic schema upgrade or production v2 activation.
+def foundation_v2_provider(path, instance, runner_id, session_id):
+    from jrbot_storage_migrations import SQLiteFoundation
+    return SQLiteFoundation(path, instance, runner_id, session_id)
+
+
+def foundation_v2_start_allowed(lease, server_time_value, local_time_value, *, max_clock_skew_seconds=2):
+    """Conservative pre-start check. No clock-uncertainty extension of a deadline."""
+    from jrbot_storage_migrations import time as v2_time, FoundationError
+    if lease.get('start_before') is None:
+        return True
+    server, local = v2_time(server_time_value), v2_time(local_time_value)
+    if abs((local-server).total_seconds()) > max_clock_skew_seconds:
+        raise FoundationError('CLOCK_UNCERTAIN')
+    if max(server, local) >= v2_time(lease['start_before']):
+        raise FoundationError('START_DEADLINE_EXCEEDED')
+    return True

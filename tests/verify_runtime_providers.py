@@ -199,5 +199,10 @@ def local_checks():
 
 if __name__=='__main__':
     frames=contract_vectors(LocalFixture);local_checks()
+    with LocalFixture() as fixture:
+        with fixture.db() as db:
+            assert db.execute('PRAGMA user_version').fetchone()[0] == 0
+            assert 'log_mode' not in {row[1] for row in db.execute('PRAGMA table_info(tbl_jobs)')}
+    print('V1_STARTUP_DOES_NOT_ACTIVATE_V2_SCHEMA=PASS')
     print('SQLITE_RELATIONAL_SOURCE_COALESCE_SNAPSHOT_PROJECTION_ROLLBACK=PASS')
     print('EQUIVALENCE_VECTORS='+json.dumps(frames,sort_keys=True,separators=(',',':')))
