@@ -6,6 +6,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 import uuid
 from pathlib import Path
 from datetime import datetime,timedelta,timezone
@@ -121,9 +122,19 @@ class Foundation(unittest.TestCase):
   with self.assertRaisesRegex(v2.FoundationError,'REPORT_INVALID'):self.op('report',d,1)
  def test_transaction_rollback(self):
   self.manual();l=self.lease();run=uid();self.op('renew',dict(dispatch_id=l['dispatch_id'],run_id=run))
-  with sqlite3.connect(self.path)as db:db.execute("CREATE TRIGGER deny_log BEFORE INSERT ON tbl_job_log BEGIN SELECT RAISE(ABORT,'synthetic rollback'); END")
   d={k:l[k]for k in ('dispatch_id','job_id','job_key','job_revision','scheduled_for','attempt')};d.update(run_id=run,started_at=at(),finished_at=at(1),outcome='succeeded',message='ok',execution_started=True)
-  with self.assertRaises(sqlite3.IntegrityError):self.op('report',d,1)
+  # Inject a log execute failure after the real metadata preflight and earlier
+  # transactional writes. An unknown persistent trigger is now refused by F04.
+  connect=sqlite3.connect
+  class FailLog:
+   def __init__(self,db):object.__setattr__(self,'_db',db)
+   def __getattr__(self,name):return getattr(self._db,name)
+   def __setattr__(self,name,value):setattr(self._db,name,value)
+   def execute(self,sql,*args):
+    if sql.startswith('INSERT INTO tbl_job_log'):raise sqlite3.IntegrityError('synthetic rollback')
+    return self._db.execute(sql,*args)
+  with patch.object(sqlite3,'connect',side_effect=lambda *a,**k:FailLog(connect(*a,**k))):
+   with self.assertRaises(sqlite3.IntegrityError):self.op('report',d,1)
   self.assertEqual(self.op('inspect',t=1)['dispatches'][l['dispatch_id']]['status'],'active')
   with sqlite3.connect(self.path)as db:self.assertIsNone(db.execute('SELECT last_ok FROM tbl_jobs').fetchone()[0])
 
@@ -202,5 +213,99 @@ class Foundation(unittest.TestCase):
   self.op('renew',dict(dispatch_id=l['dispatch_id'],run_id=run),t=1)
   with self.assertRaisesRegex(v2.FoundationError,'DISPATCH_STALE'):
    self.op('renew',dict(dispatch_id=l['dispatch_id'],run_id=run),t=61)
+
+ # F04 Variant A: fixture schemas are mutated only by these explicit tests.
+ def schema_snapshot(self):
+  with sqlite3.connect(self.path) as db:
+   objects=db.execute('SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name').fetchall()
+   rows=[]
+   for typ,name,_,_ in objects:
+    if typ=='table':rows.append((name,db.execute('SELECT * FROM "'+name.replace('"','""')+'" ORDER BY rowid').fetchall()))
+   return objects,rows,db.execute('PRAGMA user_version').fetchone()
+ def schema_refused(self):
+  before=self.schema_snapshot()
+  with self.assertRaisesRegex(v2.FoundationError,'^PROVIDER_SCHEMA_INVALID$'):self.op('inspect')
+  self.assertEqual(self.schema_snapshot(),before)
+ def schema_guard_only(self):
+  before=self.schema_snapshot()
+  with sqlite3.connect(self.path) as db:
+   db.execute('BEGIN IMMEDIATE');v2.schema_guard_sqlite(db);db.rollback()
+  self.assertEqual(self.schema_snapshot(),before)
+ def schema_replace(self,table,old,new):
+  with sqlite3.connect(self.path) as db:
+   ddl=db.execute('SELECT sql FROM sqlite_master WHERE name=?',(table,)).fetchone()[0]
+   self.assertIn(old,ddl);changed=ddl.replace(old,new,1)
+   db.execute('ALTER TABLE "'+table+'" RENAME TO f04_held')
+   db.execute(changed)
+   db.execute('INSERT INTO "'+table+'" SELECT * FROM f04_held')
+   db.execute('DROP TABLE f04_held')
+ def test_schema_f04_existing_baseline_read_only(self):self.schema_guard_only()
+ def test_schema_f04_missing_each_table(self):
+  for name in ('tbl_jobs','tbl_job_log','jrbot_manual_requests','jrbot_provider_state','jrbot_provider_dispatches','jrbot_provider_requests'):
+   with self.subTest(table=name):
+    with sqlite3.connect(self.path) as db:db.execute('ALTER TABLE "'+name+'" RENAME TO f04_held')
+    try:self.schema_refused()
+    finally:
+     with sqlite3.connect(self.path) as db:db.execute('ALTER TABLE f04_held RENAME TO "'+name+'"')
+ def test_schema_f04_view_replacement(self):
+  with sqlite3.connect(self.path) as db:
+   db.execute('ALTER TABLE tbl_job_log RENAME TO f04_held')
+   db.execute('CREATE VIEW tbl_job_log AS SELECT * FROM f04_held')
+  self.schema_refused()
+ def test_schema_f04_missing_column(self):
+  with sqlite3.connect(self.path) as db:db.execute('ALTER TABLE tbl_jobs RENAME COLUMN last_message TO f04_unknown')
+  self.schema_refused()
+ def test_schema_f04_wrong_type(self):
+  self.schema_replace('tbl_jobs','job_group TEXT','job_group BLOB');self.schema_refused()
+ def test_schema_f04_wrong_default(self):
+  self.schema_replace('tbl_jobs',"DEFAULT 'all'","DEFAULT 'none'");self.schema_refused()
+ def test_schema_f04_wrong_nullability(self):
+  self.schema_replace('jrbot_manual_requests','document TEXT NOT NULL','document TEXT');self.schema_refused()
+ def test_schema_f04_wrong_identity_collation(self):
+  self.schema_replace('jrbot_manual_requests','instance TEXT NOT NULL','instance TEXT COLLATE NOCASE NOT NULL');self.schema_refused()
+ def test_schema_f04_unknown_trigger(self):
+  with sqlite3.connect(self.path) as db:db.execute('CREATE TRIGGER f04_trigger BEFORE INSERT ON tbl_job_log BEGIN SELECT 1; END')
+  self.schema_refused()
+ def test_schema_f04_unknown_unique(self):
+  with sqlite3.connect(self.path) as db:db.execute('CREATE UNIQUE INDEX f04_extra_unique ON tbl_jobs(job_key)')
+  self.schema_refused()
+ def test_schema_f04_partial_unique(self):
+  with sqlite3.connect(self.path) as db:db.execute('CREATE UNIQUE INDEX f04_partial ON tbl_job_log(dispatch_id) WHERE dispatch_id IS NOT NULL')
+  self.schema_refused()
+ def test_schema_f04_expression_unique(self):
+  with sqlite3.connect(self.path) as db:db.execute('CREATE UNIQUE INDEX f04_expression ON tbl_job_log(lower(dispatch_id))')
+  self.schema_refused()
+ def test_schema_f04_ordinary_extra_index(self):
+  with sqlite3.connect(self.path) as db:db.execute('CREATE INDEX f04_performance ON tbl_jobs(job_group)')
+  self.schema_guard_only()
+ def test_schema_f04_wrong_version(self):
+  with sqlite3.connect(self.path) as db:db.execute('PRAGMA user_version=1')
+  self.schema_refused()
+ def test_schema_f04_unknown_incoming_foreign_key(self):
+  with sqlite3.connect(self.path) as db:db.execute('CREATE TABLE f04_foreign(job_id INTEGER REFERENCES tbl_jobs(id))')
+  self.schema_refused()
+ def test_schema_f04_literal_case_is_not_normalized(self):
+  self.schema_replace('jrbot_manual_requests',"'pending'","'PENDING'");self.schema_refused()
+ def test_schema_f04_boolean_grouping_is_not_erased(self):
+  # Moving boolean grouping must never disappear during normalization.
+  old="(instance IS NULL AND dispatch_id IS NULL AND outcome IS NULL) OR\n (instance IS NOT NULL AND dispatch_id IS NOT NULL AND outcome IS NOT NULL AND outcome IN('succeeded','failed','rejected'))"
+  changed="(instance IS NULL AND dispatch_id IS NULL AND (outcome IS NULL OR instance IS NOT NULL) AND dispatch_id IS NOT NULL AND outcome IS NOT NULL AND outcome IN('succeeded','failed','rejected'))"
+  self.schema_replace('tbl_job_log',old,changed)
+  self.schema_refused()
+ def test_schema_f04_metadata_denial(self):
+  before=self.schema_snapshot()
+  with sqlite3.connect(self.path) as db:
+   db.execute('BEGIN IMMEDIATE')
+   def deny(action,table,column,database,source):
+    return sqlite3.SQLITE_DENY if action==sqlite3.SQLITE_READ and table in ('sqlite_master','sqlite_schema') else sqlite3.SQLITE_OK
+   db.set_authorizer(deny)
+   with self.assertRaisesRegex(v2.FoundationError,'^PROVIDER_SCHEMA_UNVERIFIABLE$'):v2.schema_guard_sqlite(db)
+   db.set_authorizer(None);db.rollback()
+  self.assertEqual(self.schema_snapshot(),before)
+ def test_schema_f04_disabled_check_enforcement(self):
+  with sqlite3.connect(self.path) as db:
+   db.execute('PRAGMA ignore_check_constraints=ON');db.execute('BEGIN IMMEDIATE')
+   with self.assertRaisesRegex(v2.FoundationError,'^PROVIDER_SCHEMA_INVALID$'):v2.schema_guard_sqlite(db)
+   db.rollback()
 
 if __name__=='__main__':unittest.main(verbosity=2)

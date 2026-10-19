@@ -47,3 +47,32 @@ These suites create only new TemporaryDirectory SQLite fixtures; Requests is rep
 ## Deferred
 
 Bounded real invocation (8 leases/45 seconds), real v2 transport client, private tier/CSRF/bootstrap, audit capabilities, installers/Apps-Prepare, productive DB migration and explicit recovery. Protocol v2 currently travels through the existing handler runtime routes; URI /jrbot/v1 identifies the existing handler surface, not a permission to silently change runtime/1 bodies. No live target was called.
+
+## F04, Variante A — isolierter Schema-Guard (2026-10-18)
+
+Status dieses Abschnitts: implementierter isolierter Kandidat, **native Nachweise ausstehend**. Keine automatische Migration und keine Runtime-Aktivierung. Ausgangscheckpoint Public `622ce53a3f87bdb7b89901c7d6c36196b385f948` / Private `4bec1b8ab25eb6660c8e726a56b0571c1b6ab8ff`, Tag `checkpoint/logging-foundation-v2-20261018`.
+
+`SQLiteFoundation.operation()` ruft innerhalb seiner eigenen `BEGIN IMMEDIATE`-Transaktion vor dem ersten Zustands-/Jobwrite `schema_guard_sqlite()` auf. `user_version=2` und aktive SQLite-CHECK-Durchsetzung sind erforderlich. Tabellen-/Trigger-/FK-/Indexmetadaten werden gelesen; es gibt keinen positiven Cache über Operationen hinweg. Abweichung führt zu `PROVIDER_SCHEMA_INVALID`, nicht nachweisbare Metadaten zu `PROVIDER_SCHEMA_UNVERIFIABLE`; die Operation rollt ohne Reparatur zurück.
+
+### Präziser SQLite-Vertrag
+
+Erkannt werden ausschließlich die sechs v2-Basistabellen der bestehenden `LocalDbProvider.prepare()`- plus `migrate_sqlite()`-Baseline. Ihre vollständigen Deklarationen werden tokenweise verglichen: Whitespace, Kommentare und einfache zitierte Identifier dürfen variieren, Stringliteralwerte und Constraint-Gruppierung bleiben erhalten. Keine bloße CHECK-Teilstringsuche. Das nach `ALTER ADD COLUMN` mögliche Einfügen von `log_mode` vor oder nach dem vorhandenen UNIQUE-Tabellenconstraint und von `document` vor oder nach dem Requests-Primary-Key wird ausdrücklich unterstützt. Andere DDL-Formen, zusätzliche Spalten/Constraints, STRICT/WITHOUT ROWID und nicht klassifizierbare Varianten werden konservativ abgewiesen, selbst wenn einzelne davon funktional ähnlich sein könnten.
+
+| Tabelle | Verbindliche Identität / CHECK-Baseline |
+|---|---|
+| `tbl_jobs` | INTEGER-Autoincrement-PK `id`, UNIQUE `(bot_name,job_key)`; vorhandene Typ-/Längen-/Enum-/Bool-CHECKs und `log_mode`-CHECK |
+| `tbl_job_log` | INTEGER-Autoincrement-PK `id`, UNIQUE `(instance,dispatch_id)`; Bool- und Identitäts-/Outcome-Kopplungs-CHECK |
+| `jrbot_provider_state` | bestehender TEXT-PK `instance`; TEXT-NOT-NULL-Dokument |
+| `jrbot_provider_dispatches` | PK `(instance,dispatch_id)`, Dokument/Status wie Baseline |
+| `jrbot_provider_requests` | PK `(instance,request_key)`, nullable `dispatch_id`/`document` |
+| `jrbot_manual_requests` | PK `(instance,request_id)`, UNIQUE `(instance,active_job_id)`, State-CHECK |
+
+Alle vorhandenen Unique-Indizes müssen genau den bekannten Schlüsseln entsprechen: vollständig, aufsteigend, BINARY, nicht partiell, keine Expressions. Zusätzliche gewöhnliche nicht-eindeutige Vollspaltenindizes sind erlaubt; zusätzliche Unique-, Ausdrucks-, Partial- oder abweichende Collation-Indizes nicht. Unbekannte Trigger auf den sechs Tabellen sowie sichtbare eingehende/ausgehende Fremdschlüssel werden verweigert. SQL-Identifier aus dem Katalog werden sicher zitiert.
+
+**Variante-A-Grenze:** SQLite besitzt in dieser bestehenden Baseline keinen SQL-`JSON_VALID`-CHECK für State-/Dispatch-/Manual-Dokumente und keinen SQL-CHECK `active_job_id IS NULL OR active_job_id=job_id`. Die vorhandenen JSON-Parser und Übergangsfunktionen werden nicht durch zusätzliche DB-Constraints ersetzt. Der Guard belegt deshalb die erkannte SQLite-Baseline, **keine identische MySQL-Constraint-Ausstattung und keine Integrität gegen direkte Fremdschreibzugriffe**. Eine solche Angleichung benötigt einen separaten Migrationsvertrag. Der bestehende nullable TEXT-Primary-Key der State-Tabelle wird als bekannte Baseline akzeptiert; daraus folgt keine zusätzliche NOT-NULL-Garantie für direkte Fremdschreiber.
+
+### Geplante Nachweise
+
+19 zusätzliche SQLite-Testmethoden decken Baseline, jede fehlende Tabelle, View-Ersatz, Spalte/Typ/Default/Nullfähigkeit/Collation, Trigger, zusätzliche/partielle/Expression-Unique-Indizes, erlaubten Performanceindex, Version, Fremdschlüssel, Literal-/Gruppierungsschutz, Metadatenverweigerung und ausgeschaltete CHECKs ab. Ausführung erst im nativen Gate. Der bestehende Rollback-Test bleibt erhalten: Eine testlokale Connection-Delegation provoziert den Logfehler nach dem echten Guard und vor dem Loginsert; ein Fehler-Trigger wäre seit F04 bereits korrekt im Guard abgefangen worden.
+
+F05 unverändert offen: keine neue TTL, keine Löschung, kein Tombstone-/Sessionlebenszyklus, keine Kapazitätserhöhung. Auch das bestehende Vollzustandsladen und seine Grenzen sind durch diesen Guard nicht gelöst. Startfrist zwei Pollintervalle und Ausführungslease bleiben unverändert. Unbekannte Schemas werden nicht auf eigene Faust migriert.

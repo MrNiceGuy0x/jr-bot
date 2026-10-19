@@ -262,6 +262,103 @@ def checked_path(path):
     if not stat.S_ISREG(s.st_mode) or s.st_uid != os.geteuid() or s.st_mode & 0o022: fail('DB_UNSAFE')
     return path
 
+# F04: a deliberately narrow, token-exact schema language, not a DDL repairer.
+# String literals retain their value/case; quoted identifiers and whitespace may vary.
+_SCHEMA_TOKEN = re.compile(r"\s+|--[^\n]*(?:\n|$)|/\*.*?\*/|'(?:''|[^'])*'|\"(?:\"\"|[^\"])*\"|`(?:``|[^`])*`|\[[^\]]*\]|[A-Za-z_][A-Za-z0-9_]*|[0-9]+|[(),;=]", re.S)
+
+def _schema_tokens(sql):
+    tokens, pos = [], 0
+    while pos < len(sql):
+        match = _SCHEMA_TOKEN.match(sql, pos)
+        if not match: fail('PROVIDER_SCHEMA_INVALID')
+        text = match.group(); pos = match.end()
+        if text.isspace() or text.startswith(('--', '/*')): continue
+        if text[0] == "'": tokens.append(('literal', text[1:-1].replace("''", "'")))
+        elif text[0] in ('"', '`', '['):
+            name = text[1:-1]
+            if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', name): fail('PROVIDER_SCHEMA_INVALID')
+            tokens.append(('word', name.lower()))
+        elif re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', text): tokens.append(('word', text.lower()))
+        else: tokens.append(('symbol', text))
+    return tokens
+
+def _schema_body(sql, name):
+    tokens = _schema_tokens(sql)
+    w = lambda x: ('word', x)
+    if tokens[:2] != [w('create'), w('table')]: fail('PROVIDER_SCHEMA_INVALID')
+    at = 2
+    if tokens[at:at+3] == [w('if'), w('not'), w('exists')]: at += 3
+    if tokens[at:at+2] != [w(name), ('symbol', '(')]: fail('PROVIDER_SCHEMA_INVALID')
+    body, depth = [], 1
+    for token in tokens[at+2:]:
+        if depth == 0:
+            if token != ('symbol', ';'): fail('PROVIDER_SCHEMA_INVALID')
+            continue
+        if token == ('symbol', '('): depth += 1
+        if token == ('symbol', ')'): depth -= 1
+        if depth: body.append(token)
+    if depth: fail('PROVIDER_SCHEMA_INVALID')
+    return body
+
+def schema_guard_sqlite(db):
+    """Only reads metadata. Caller owns BEGIN IMMEDIATE; never migrates or caches."""
+    import sqlite3
+    from job_runner import SQLITE_JOBS_DDL
+    try:
+        if db.execute('PRAGMA user_version').fetchone()[0] != 2: fail('PROVIDER_SCHEMA_INVALID')
+        enabled = db.execute('PRAGMA ignore_check_constraints').fetchone()
+        if enabled is None: fail('PROVIDER_SCHEMA_UNVERIFIABLE')
+        if enabled[0] != 0: fail('PROVIDER_SCHEMA_INVALID')
+        templates = {
+            'tbl_jobs': SQLITE_JOBS_DDL[:-1] + ", log_mode TEXT NOT NULL DEFAULT 'all' CHECK(log_mode IN('all','errors_only','none')))",
+            'tbl_job_log': DDL_LOG,
+            'jrbot_manual_requests': DDL_MANUAL,
+            'jrbot_provider_state': 'CREATE TABLE jrbot_provider_state(instance TEXT PRIMARY KEY, document TEXT NOT NULL)',
+            'jrbot_provider_dispatches': 'CREATE TABLE jrbot_provider_dispatches(instance TEXT NOT NULL, dispatch_id TEXT NOT NULL, status TEXT NOT NULL, document TEXT NOT NULL, PRIMARY KEY(instance,dispatch_id))',
+            'jrbot_provider_requests': 'CREATE TABLE jrbot_provider_requests(instance TEXT NOT NULL, request_key TEXT NOT NULL, dispatch_id TEXT, document TEXT, PRIMARY KEY(instance,request_key))',
+        }
+        # ALTER ADD COLUMN appends after an existing table constraint. Both exact
+        # known orderings are equivalent here; no arbitrary expression rewriting.
+        requests_alt = 'CREATE TABLE jrbot_provider_requests(instance TEXT NOT NULL, request_key TEXT NOT NULL, dispatch_id TEXT, PRIMARY KEY(instance,request_key), document TEXT)'
+        known = set(templates)
+        objects = db.execute('SELECT type,name,tbl_name,sql FROM sqlite_master').fetchall()
+        for obj in objects:
+            if obj[0] == 'trigger' and obj[2].lower() in known: fail('PROVIDER_SCHEMA_INVALID')
+        unique = {
+            'tbl_jobs': {('bot_name','job_key')}, 'tbl_job_log': {('instance','dispatch_id')},
+            'jrbot_manual_requests': {('instance','request_id'),('instance','active_job_id')},
+            'jrbot_provider_state': {('instance',)},
+            'jrbot_provider_dispatches': {('instance','dispatch_id')},
+            'jrbot_provider_requests': {('instance','request_key')},
+        }
+        for name, template in templates.items():
+            found = [o for o in objects if o[1].lower() == name]
+            if len(found) != 1 or found[0][0] != 'table' or not found[0][3]: fail('PROVIDER_SCHEMA_INVALID')
+            accepted = [_schema_body(template, name)]
+            if name == 'jrbot_provider_requests': accepted.append(_schema_body(requests_alt, name))
+            if name == 'tbl_jobs':
+                before_unique = SQLITE_JOBS_DDL.replace(
+                    ', UNIQUE(bot_name,job_key)',
+                    ", log_mode TEXT NOT NULL DEFAULT 'all' CHECK(log_mode IN('all','errors_only','none')), UNIQUE(bot_name,job_key)")
+                accepted.append(_schema_body(before_unique, name))
+            if _schema_body(found[0][3], name) not in accepted: fail('PROVIDER_SCHEMA_INVALID')
+            observed = []
+            for index in db.execute('PRAGMA index_list("'+name+'")').fetchall():
+                iname = index[1].replace('"','""')
+                parts = [r for r in db.execute('PRAGMA index_xinfo("'+iname+'")') if r[5] == 1]
+                if index[4] or not parts or any(p[1] < 0 or p[3] != 0 or p[4] != 'BINARY' for p in parts): fail('PROVIDER_SCHEMA_INVALID')
+                if index[2]: observed.append(tuple(p[2].lower() for p in parts))
+            if len(observed) != len(unique[name]) or set(observed) != unique[name]: fail('PROVIDER_SCHEMA_INVALID')
+        # Incoming foreign keys can add write side effects; none are part of this
+        # explicitly recognized baseline contract. Quote catalog names safely.
+        for obj in objects:
+            if obj[0] != 'table': continue
+            quoted = obj[1].replace('"','""')
+            for foreign in db.execute('PRAGMA foreign_key_list("'+quoted+'")'):
+                if obj[1].lower() in known or foreign[2].lower() in known: fail('PROVIDER_SCHEMA_INVALID')
+    except sqlite3.Error:
+        fail('PROVIDER_SCHEMA_UNVERIFIABLE')
+
 class SQLiteFoundation:
     """Opt-in v2 provider; v1 LocalDbProvider and main() remain untouched."""
     def __init__(self, path, instance, runner, session):
@@ -273,7 +370,7 @@ class SQLiteFoundation:
         db=sqlite3.connect(self.path.as_uri()+'?mode=rw',uri=True);db.row_factory=sqlite3.Row
         try:
             db.execute('BEGIN IMMEDIATE')
-            if db.execute('PRAGMA user_version').fetchone()[0]!=2: fail('PROTOCOL_INSTANCE_MISMATCH')
+            schema_guard_sqlite(db)
             row=db.execute('SELECT document FROM jrbot_provider_state WHERE instance=?',(self.instance,)).fetchone()
             if not row: fail('STATE_MISSING')
             state=json.loads(row[0])
