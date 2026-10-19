@@ -1,3 +1,20 @@
+# F05 – isolierter Kandidat, 2026-10-19
+
+Aktueller Stand: F05-Code und Testvorbereitung in einer isolierten Kandidatenkopie. Nur statisch geprüft; sämtliche nativen F05-Nachweise AUSSTEHEND. Nicht installiert, nicht migriert, kein automatischer Wartungsstart. Die weiter unten datierten F01–F04-Abschnitte sind historischer Quellenkontext und keine Aussage über den aktuellen Abnahmestatus.
+
+## F05 Bedienungsgrenze
+`operation(request_manual/lease/renew/report)` lädt offene Arbeit und historische IDs gezielt. Es gibt keinen historischen 10000-Zeilen-Abbruch im operativen Pfad. Offene Arbeit wird nicht per LIMIT ausgeblendet; `inspect` bleibt eine getrennte teure Vollzustandsdiagnose mit bisheriger Kapazitätsgrenze, keine Statusbar-Datenquelle. Nur tatsächlich geänderte Dokumente/Guardzeilen werden geschrieben. Keine instanzweite Nullsetzung der Manual-Sperren.
+
+Explizite Wartung: Python `SQLiteFoundation.maintain(now=..., dispatch_after=None, log_after=0)` bzw. PHP `JrBotRuntimeFoundationV2::maintain($dispatchAfter=null, $logAfter=0)`. Kein Wire-/HTTP-Einstieg. PHP-Zeit aus trusted Clock/Server, Python trusted Aufruferzeit analog operation. Höchstens100 besuchte completed Dispatches und100 v2-Logs je Aufruf, PK-Cursor nach letzter besuchter Zeile, done nur bei <100. Ein späterer neuer Sweep setzt Cursor null/0. Keine Sekunden-SLA, kein automatischer Endlossweep.
+
+30 Tage: aus geeigneten confirmed completed Dispatches nur `lease.payload` entfernen und `history_detail={format:1,state:compacted,compacted_at:UTC}` setzen. Alle anderen Originalfelder, kanonischer Report, actor und Bindungen bleiben erhalten. Kein Ersatz-Payload, keine Antwortbeleg-/Manual-Löschung. `inspect` zeigt das gespeicherte Format unverfälscht. Ungültige Marker oder inkonsistente Referenzen werden kontrolliert verweigert. pending/active/unknown und geschützte Zuordnungen bleiben erhalten. 30 Tage ist KEIN Versprechen vollständiger Entfernung sämtlicher Lauftexte.
+
+90 Tage: nur eigene eindeutig identifizierte v2-Logzeilen mit geeignetem completed Dispatch-Beleg, keine Legacy-NULL-Zeilen, anderen Instanzen, Orphans oder active/unknown-Bezüge löschen. last_* bleibt unverändert; alte Reports dürfen keinen Log erneut erzeugen. Derselbe Aufruf kompaktisiert und bereinigt atomar; Fehler rollt alles zurück, Fremdtransaktionen bleiben unberührt.
+
+Beide Funktionen sind Bibliotheksvorbereitung. Der tatsächliche Wartungsaufruf, Berechtigungen, Monitoring/OPSCON-Bar und Kapazitätsbudget bleiben separate Integrations-/Betriebsnachweise vor JR_BOT_FINISH. Technische Belege wachsen weiter. Selektives Materialisieren beweist keine konstante SQL-Scanzeit; zusätzliche Indizes wären separater Scope. PHP-Integerbreite begrenzt darstellbare Logcursor; zu große IDs werden verweigert statt abgeschnitten. Keine Aussage über Migration einer bestehenden Datenbank oder produktive Eignung ohne native Tests.
+
+## Historischer Quellenkontext
+
 # Opt-in runtime/2 logging and manual-request foundation
 
 Status: isolated candidate only. NOT installed, not a runtime release. main()/run_once() remain runtime/1. No startup migration, no HTTP manual-administration route, no audit execution, no tiering in Public.

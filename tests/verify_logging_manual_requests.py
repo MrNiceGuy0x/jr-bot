@@ -308,4 +308,136 @@ class Foundation(unittest.TestCase):
    with self.assertRaisesRegex(v2.FoundationError,'^PROVIDER_SCHEMA_INVALID$'):v2.schema_guard_sqlite(db)
    db.rollback()
 
+
+# F05: prepared only. Native execution requires the separately approved gate.
+class F05Foundation(Foundation):
+ # Inherited Foundation cases also remain available; targeted gate selects F05.
+ def completed(self):
+  r=self.manual();rid=uid();l=self.lease(rid=rid);_,report=self.report(l)
+  return r,rid,l,report
+ def maintain(self,t=0,**kw):return self.p.maintain(now=at(t),**kw)
+ def dispatch(self,did):
+  with sqlite3.connect(self.path)as db:return json.loads(db.execute('SELECT document FROM jrbot_provider_dispatches WHERE instance=? AND dispatch_id=?',('ggb',did)).fetchone()[0])
+ def snapshot(self):
+  with sqlite3.connect(self.path)as db:
+   return {n:db.execute('SELECT * FROM '+n+' ORDER BY 1,2').fetchall()for n in ('tbl_jobs','tbl_job_log','jrbot_provider_state','jrbot_provider_dispatches','jrbot_provider_requests','jrbot_manual_requests')}
+ def seed_empty_receipts(self,n):
+  keys=[self.p.runner+'/'+self.p.session+'/'+uid()for _ in range(n)]
+  with sqlite3.connect(self.path)as db:db.executemany('INSERT INTO jrbot_provider_requests(instance,request_key,dispatch_id,document)VALUES(?,?,NULL,?)',[('ggb',k,v2.canonical(dict(binding=v2.canonical([]),dispatch_id=None)))for k in keys])
+  return keys
+ def test_f05_history_over_10000_and_empty_replay(self):
+  keys=self.seed_empty_receipts(10001);r=self.manual();l=self.lease();_,report=self.report(l)
+  self.assertEqual(self.op('report',report,1)['result_state'],'already_recorded')
+  self.assertIsNone(self.lease(t=2,rid=keys[0].split('/')[-1]))
+  with self.assertRaisesRegex(v2.FoundationError,'REQUEST_CONFLICT'):self.lease(t=2,rid=keys[0].split('/')[-1],exclude=['1'])
+  self.assertEqual(self.count('jrbot_provider_requests'),10002)
+ def test_f05_old_completed_manual_and_report_lookup(self):
+  r,rid,l,report=self.completed();self.assertEqual(self.op('report',report,2)['result_state'],'already_recorded')
+  self.assertEqual(self.manual(request_id=r['request_id'])['dispatch_id'],l['dispatch_id'])
+  with self.assertRaisesRegex(v2.FoundationError,'DISPATCH_STALE'):self.lease(t=2,rid=rid)
+  bad=dict(report,message='conflict')
+  with self.assertRaisesRegex(v2.FoundationError,'REPORT_CONFLICT'):self.op('report',bad,2)
+ def test_f05_30_boundary_marker_and_preservation(self):
+  r,rid,l,report=self.completed();before=self.dispatch(l['dispatch_id']);cut=30*86400+1
+  self.assertEqual(self.maintain(cut-1)['dispatch_compacted'],0)
+  self.assertEqual(self.maintain(cut)['dispatch_compacted'],1)
+  after=self.dispatch(l['dispatch_id']);expected=copy.deepcopy(before);del expected['lease']['payload'];expected['history_detail']=dict(format=1,state='compacted',compacted_at=at(cut))
+  self.assertEqual(after,expected);self.assertEqual(self.op('inspect',t=cut)['dispatches'][l['dispatch_id']],expected)
+  snap=self.snapshot();self.assertEqual(self.maintain(cut+1)['dispatch_compacted'],0);self.assertEqual(self.snapshot(),snap)
+ def test_f05_compacted_replays_and_actor(self):
+  r,rid,l,report=self.completed();self.maintain(30*86400+1)
+  self.assertEqual(self.op('report',report,30*86400+2)['result_state'],'already_recorded')
+  self.assertEqual(self.manual(request_id=r['request_id'])['actor'],r['actor'])
+  with self.assertRaisesRegex(v2.FoundationError,'DISPATCH_STALE'):self.lease(t=30*86400+2,rid=rid)
+  with self.assertRaisesRegex(v2.FoundationError,'REQUEST_CONFLICT'):self.op('request_manual',dict(request_id=r['request_id'],job_id='1'),actor=dict(context='ggb',user_id=2))
+  with self.assertRaisesRegex(v2.FoundationError,'REPORT_CONFLICT'):self.op('report',dict(report,message='changed'),30*86400+2)
+ def test_f05_90_log_boundary_no_reprojection(self):
+  r,rid,l,report=self.completed();cut=90*86400+1
+  self.assertEqual(self.maintain(cut-1)['logs_deleted'],0);self.assertEqual(self.maintain(cut)['logs_deleted'],1)
+  with sqlite3.connect(self.path)as db:last=db.execute('SELECT last_run_utc,last_ok,last_message,last_duration_ms FROM tbl_jobs').fetchone()
+  self.assertEqual(self.op('report',report,cut+1)['result_state'],'already_recorded');self.assertEqual(self.count('tbl_job_log'),0)
+  with sqlite3.connect(self.path)as db:self.assertEqual(db.execute('SELECT last_run_utc,last_ok,last_message,last_duration_ms FROM tbl_jobs').fetchone(),last)
+ def test_f05_other_instance_legacy_and_missing_dispatch_logs(self):
+  with sqlite3.connect(self.path)as db:
+   db.execute("INSERT INTO tbl_job_log(job_id,bot_name,ran_at,ok)VALUES(1,'GGB','2020-01-01 00:00:00',1)")
+   for inst in ('other','ggb'):
+    db.execute("INSERT INTO tbl_job_log(job_id,bot_name,ran_at,ok,instance,dispatch_id,outcome)VALUES(1,'GGB','2020-01-01 00:00:00',1,?,?, 'succeeded')",(inst,uid()))
+  self.assertEqual(self.maintain(100*86400)['logs_deleted'],0);self.assertEqual(self.count('tbl_job_log'),3)
+ def test_f05_unknown_and_pending_not_compacted_or_restarted(self):
+  r=self.manual();l=self.lease();run=uid();self.op('renew',dict(dispatch_id=l['dispatch_id'],run_id=run));self.op('inspect',t=61)
+  before=self.snapshot();self.assertEqual(self.maintain(100*86400)['dispatch_compacted'],0);self.assertEqual(before,self.snapshot())
+  self.assertIsNone(self.lease(t=100*86400));self.assertEqual(self.dispatch(l['dispatch_id'])['status'],'unknown')
+ def test_f05_cursor_100_visited_and_restart(self):
+  _,_,l,_=self.completed();template=self.dispatch(l['dispatch_id']);ids=[l['dispatch_id']]
+  with sqlite3.connect(self.path)as db:
+   for _ in range(100):
+    did=uid();d=copy.deepcopy(template);d['lease']['dispatch_id']=did;d['lease']['request_id']=None;d['actor']=None
+    report=json.loads(d['report']);report['dispatch_id']=did;d['report']=v2.canonical(report)
+    db.execute('INSERT INTO jrbot_provider_dispatches VALUES(?,?,?,?)',('ggb',did,'completed',v2.canonical(d)));ids.append(did)
+  first=self.maintain(30*86400+1);self.assertEqual(first['dispatch_visited'],100);self.assertFalse(first['dispatch_done']);self.assertEqual(first['dispatch_after'],sorted(ids)[99])
+  second=self.maintain(30*86400+1,dispatch_after=first['dispatch_after'],log_after=first['log_after']);self.assertEqual(second['dispatch_compacted'],1);self.assertTrue(second['dispatch_done'])
+  self.assertEqual(self.maintain(30*86400+2)['dispatch_compacted'],0)
+ def test_f05_invalid_marker_rolls_back(self):
+  _,_,l,_=self.completed()
+  with sqlite3.connect(self.path)as db:
+   d=self.dispatch(l['dispatch_id']);d['history_detail']=dict(format=99,state='compacted',compacted_at=at());db.execute('UPDATE jrbot_provider_dispatches SET document=?',(v2.canonical(d),))
+  before=self.snapshot()
+  with self.assertRaisesRegex(v2.FoundationError,'RETENTION_RECORD_INVALID'):self.maintain(100*86400)
+  self.assertEqual(before,self.snapshot())
+ def test_f05_maintenance_rollback_after_compaction(self):
+  _,_,l,_=self.completed();before=self.snapshot();real=sqlite3.connect
+  class Broken:
+   def __init__(self,db):object.__setattr__(self,'db',db)
+   def __getattr__(self,n):return getattr(self.db,n)
+   def __setattr__(self,n,v):setattr(self.db,n,v)
+   def execute(self,q,*args):
+    if q.startswith('DELETE FROM tbl_job_log'):raise sqlite3.OperationalError('F05_SYNTHETIC_DELETE_FAILURE')
+    return self.db.execute(q,*args)
+  with patch.object(v2.sqlite3,'connect',side_effect=lambda *a,**k:Broken(real(*a,**k))):
+   with self.assertRaisesRegex(sqlite3.OperationalError,'F05_SYNTHETIC_DELETE_FAILURE'):self.maintain(100*86400)
+  self.assertEqual(before,self.snapshot())
+ def test_f05_selective_reads_and_no_history_rewrites(self):
+  self.seed_empty_receipts(10001);_,_,l,report=self.completed();seen=[];real=sqlite3.connect
+  def connect(*a,**k):
+   db=real(*a,**k);db.set_trace_callback(seen.append);return db
+  with patch.object(v2.sqlite3,'connect',side_effect=connect):self.op('report',report,2)
+  requests=[q for q in seen if q.startswith('SELECT request_key')];self.assertEqual(requests,[])
+  self.assertFalse(any(q.startswith(('INSERT INTO jrbot_provider_dispatches','INSERT INTO tbl_job_log','INSERT INTO jrbot_manual_requests','UPDATE jrbot_manual_requests SET active_job_id=NULL'))for q in seen))
+  self.assertFalse(any(q.startswith(('DELETE ','UPDATE jrbot_provider_dispatches SET document='))for q in seen))
+ def test_f05_invalid_cursors_and_no_automatic_maintenance(self):
+  before=self.snapshot()
+  for kw in (dict(dispatch_after='../x'),dict(log_after=-1),dict(log_after=True)):
+   with self.assertRaises(v2.FoundationError):self.maintain(**kw)
+  self.assertEqual(before,self.snapshot())
+ def test_f05_query_plan_evidence(self):
+  # Captured at the native gate: no assertion of O(1) scans without an index.
+  with sqlite3.connect(self.path)as db:
+   self.f05_query_plans={q:db.execute('EXPLAIN QUERY PLAN '+q,('ggb',)).fetchall()for q in ("SELECT dispatch_id FROM jrbot_provider_dispatches WHERE instance=? AND status IN ('active','unknown')","SELECT request_id FROM jrbot_manual_requests WHERE instance=? AND active_job_id IS NOT NULL")}
+  self.assertTrue(all(self.f05_query_plans.values()))
+
+ def test_f05_over_10000_completed_and_cancelled_rows(self):
+  r,_,l,report=self.completed();template=self.dispatch(l['dispatch_id'])
+  dispatch_rows=[];manual_rows=[]
+  for _ in range(10001):
+   did=uid();d=copy.deepcopy(template);d['lease'].update(dispatch_id=did,request_id=None,trigger='scheduled',start_before=None);d['actor']=None
+   body=json.loads(d['report']);body['dispatch_id']=did;d['report']=v2.canonical(body)
+   dispatch_rows.append(('ggb',did,'completed',v2.canonical(d)))
+   rid=uid();m=copy.deepcopy(r);m.update(request_id=rid,state='cancelled',reason='start_deadline_exceeded',dispatch_id=None)
+   manual_rows.append(('ggb',rid,'1','cancelled',None,v2.canonical(m)))
+  with sqlite3.connect(self.path)as db:
+   db.executemany('INSERT INTO jrbot_provider_dispatches VALUES(?,?,?,?)',dispatch_rows)
+   db.executemany('INSERT INTO jrbot_manual_requests VALUES(?,?,?,?,?,?)',manual_rows)
+  self.assertEqual(self.op('report',report,2)['result_state'],'already_recorded')
+  self.assertIsNone(self.lease(t=2));self.manual()
+ def test_f05_release_only_expired_request_guard(self):
+  old=self.manual();rid=uid()
+  self.op('request_manual',dict(request_id=rid,job_id='1'),120,dict(context='ggb',user_id=1))
+  with sqlite3.connect(self.path)as db:
+   values=dict(db.execute('SELECT request_id,active_job_id FROM jrbot_manual_requests'))
+  self.assertIsNone(values[old['request_id']]);self.assertEqual(values[rid],'1')
+ def test_f05_old_report_does_not_run_maintenance(self):
+  _,_,l,report=self.completed();self.assertEqual(self.op('report',report,100*86400)['result_state'],'already_recorded')
+  self.assertIn('payload',self.dispatch(l['dispatch_id'])['lease']);self.assertEqual(self.count('tbl_job_log'),1)
+
 if __name__=='__main__':unittest.main(verbosity=2)
+

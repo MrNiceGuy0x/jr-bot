@@ -42,6 +42,47 @@ def ident(value):
 def canonical(value):
     return json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=True, allow_nan=False)
 
+def validate_history_detail(d):
+    if not isinstance(d,dict):fail('RETENTION_RECORD_INVALID')
+    lease=d.get('lease')
+    if not isinstance(lease,dict):fail('RETENTION_RECORD_INVALID')
+    if 'history_detail' not in d:
+        if 'payload' not in lease:fail('RETENTION_RECORD_INVALID')
+        return
+    marker=d['history_detail']
+    if (not isinstance(marker,dict) or set(marker)!={'format','state','compacted_at'} or
+        type(marker['format']) is not int or marker['format']!=1 or marker['state']!='compacted' or
+        d.get('status')!='completed' or 'payload' in lease):fail('RETENTION_RECORD_INVALID')
+    try:time(marker['compacted_at'])
+    except ValueError:fail('RETENTION_RECORD_INVALID')
+
+def retention_finished(d):
+    try:
+        report=json.loads(d['report'])
+        if not isinstance(report,dict) or canonical(report)!=d['report']:fail('RETENTION_RECORD_INVALID')
+        finish=time(report['finished_at'])
+        if finish<time(d['issued_at']):fail('RETENTION_RECORD_INVALID')
+        return finish
+    except (KeyError,TypeError,ValueError):fail('RETENTION_RECORD_INVALID')
+
+def validate_retention_dispatch(d,did):
+    validate_history_detail(d)
+    if d.get('status')!='completed' or d['lease'].get('dispatch_id')!=did:fail('RETENTION_RECORD_INVALID')
+    try:
+        report=json.loads(d['report'])
+        for key in ('dispatch_id','job_id','job_key','job_revision','scheduled_for','attempt'):
+            if type(report[key]) is not type(d['lease'][key]) or report[key]!=d['lease'][key]:fail('RETENTION_RECORD_INVALID')
+        if report['run_id']!=d['run']:fail('RETENTION_RECORD_INVALID')
+        fields={'dispatch_id','run_id','job_id','job_key','job_revision','scheduled_for','attempt','started_at','finished_at','outcome','message','execution_started'}
+        if set(report)!=fields or report['outcome'] not in ('succeeded','failed','rejected') or type(report['execution_started']) is not bool:fail('RETENTION_RECORD_INVALID')
+        ident(report['run_id']);ident(report['dispatch_id']);ident(d['runner']);ident(d['session'])
+        start,finish=time(report['started_at']),time(report['finished_at'])
+        if finish<start or start<time(d['issued_at']) or not isinstance(report['message'],str) or len(report['message'].encode())>512:fail('RETENTION_RECORD_INVALID')
+        if not report['execution_started'] and report['outcome']!='rejected':fail('RETENTION_RECORD_INVALID')
+        if report['execution_started'] and d['lease']['start_before'] and start>=time(d['lease']['start_before']):fail('RETENTION_RECORD_INVALID')
+    except (KeyError,TypeError,ValueError):fail('RETENTION_RECORD_INVALID')
+    retention_finished(d)
+
 def initial(instance, poll):
     if not re.fullmatch(r'[a-z][a-z0-9_-]{0,31}', instance): fail('INSTANCE_INVALID')
     if type(poll) is not int or not 1 <= poll <= 86400: fail('POLL_INVALID')
@@ -107,6 +148,7 @@ def ready(state, now, excluded):
 def transition(state, operation, data, runner, session, now, new_id=None):
     ident(runner); ident(session)
     if state.get('version') != 2: fail('PROTOCOL_INSTANCE_MISMATCH')
+    for record in state['dispatches'].values():validate_history_detail(record)
     expire(state, now)
     response = dict(protocol=PROTOCOL, ok=True, server_time=stamp(now))
     if operation == 'lease':
@@ -364,31 +406,82 @@ class SQLiteFoundation:
     def __init__(self, path, instance, runner, session):
         self.path=checked_path(path);self.instance=instance;self.runner=ident(runner);self.session=ident(session)
 
+    def _load_work(self, db, state, operation, data, jobs):
+        """Open work is never truncated; historical identity lookups use the PK."""
+        manual_active = {}
+        state.update(manual={}, dispatches={}, requests={})
+        def manual(rows):
+            for row in rows:
+                state['manual'][row[0]] = json.loads(row[1]); manual_active[row[0]] = row[2]
+        def dispatch(rows):
+            for row in rows:
+                d = json.loads(row[1])
+                if d['status'] != row[2]: fail('RETENTION_RECORD_INVALID')
+                validate_history_detail(d); state['dispatches'][row[0]] = d
+        if operation == 'inspect':
+            manual(db.execute('SELECT request_id,document,active_job_id FROM jrbot_manual_requests WHERE instance=?',(self.instance,)))
+            dispatch(db.execute('SELECT dispatch_id,document,status FROM jrbot_provider_dispatches WHERE instance=?',(self.instance,)))
+            receipts = db.execute('SELECT request_key,document,dispatch_id FROM jrbot_provider_requests WHERE instance=?',(self.instance,)).fetchall()
+            if max(len(state['manual']),len(state['dispatches']),len(receipts)) > 10000: fail('STATE_CAPACITY')
+        else:
+            manual(db.execute('SELECT request_id,document,active_job_id FROM jrbot_manual_requests WHERE instance=? AND active_job_id IS NOT NULL',(self.instance,)))
+            dispatch(db.execute("SELECT dispatch_id,document,status FROM jrbot_provider_dispatches WHERE instance=? AND status IN ('active','unknown')",(self.instance,)))
+            receipts = []
+            if operation == 'request_manual':
+                rid = ident(data.get('request_id'))
+                manual(db.execute('SELECT request_id,document,active_job_id FROM jrbot_manual_requests WHERE instance=? AND request_id=?',(self.instance,rid)))
+            elif operation == 'lease':
+                key = self.runner+'/'+self.session+'/'+ident(data.get('lease_request_id'))
+                receipts = db.execute('SELECT request_key,document,dispatch_id FROM jrbot_provider_requests WHERE instance=? AND request_key=?',(self.instance,key)).fetchall()
+            elif operation in ('renew','report'):
+                did = ident(data.get('dispatch_id'))
+                dispatch(db.execute('SELECT dispatch_id,document,status FROM jrbot_provider_dispatches WHERE instance=? AND dispatch_id=?',(self.instance,did)))
+            else: fail('OPERATION_INVALID')
+        for key,body,did in receipts:
+            state['requests'][key] = json.loads(body) if body is not None else dict(binding='__legacy_v1__',dispatch_id=did)
+        # Close only references reachable from open work, the request, and locks.
+        wanted_d = {r['dispatch_id'] for r in state['requests'].values() if r['dispatch_id'] is not None}
+        wanted_d.update(r['locked_by'] for r in jobs if r.get('locked_by'))
+        checked_d, checked_m = set(), set()
+        while True:
+            wanted_d.update(r['dispatch_id'] for r in state['manual'].values() if r.get('dispatch_id'))
+            todo = wanted_d-set(state['dispatches'])-checked_d
+            for did in todo:
+                dispatch(db.execute('SELECT dispatch_id,document,status FROM jrbot_provider_dispatches WHERE instance=? AND dispatch_id=?',(self.instance,did)))
+                checked_d.add(did)
+            wanted_m = {d['lease']['request_id'] for d in state['dispatches'].values() if d['lease'].get('request_id')}
+            more = wanted_m-set(state['manual'])-checked_m
+            for rid in more:
+                manual(db.execute('SELECT request_id,document,active_job_id FROM jrbot_manual_requests WHERE instance=? AND request_id=?',(self.instance,rid)))
+                checked_m.add(rid)
+            if not todo and not more: break
+        for record in state['requests'].values():
+            if record['dispatch_id'] is not None and record['dispatch_id'] not in state['dispatches']: fail('RETENTION_RECORD_INVALID')
+        for r in state['manual'].values():
+            if r.get('dispatch_id') is not None and r['dispatch_id'] not in state['dispatches']: fail('RETENTION_RECORD_INVALID')
+        for d in state['dispatches'].values():
+            if d['lease'].get('request_id') is not None and d['lease']['request_id'] not in state['manual']: fail('RETENTION_RECORD_INVALID')
+        return manual_active
+
     def operation(self, operation, data, *, now, actor=None):
         from job_runner import _source_job, JOB_DEFINITION_FIELDS, _db_bot, ProviderStateError
         now=time(now);checked_path(self.path)
         db=sqlite3.connect(self.path.as_uri()+'?mode=rw',uri=True);db.row_factory=sqlite3.Row
         try:
-            db.execute('BEGIN IMMEDIATE')
-            schema_guard_sqlite(db)
+            db.execute('BEGIN IMMEDIATE');schema_guard_sqlite(db)
             row=db.execute('SELECT document FROM jrbot_provider_state WHERE instance=?',(self.instance,)).fetchone()
             if not row: fail('STATE_MISSING')
-            state=json.loads(row[0])
+            old_body=row[0];state=json.loads(old_body)
             if state.get('version')!=2 or state.get('instance')!=self.instance: fail('PROTOCOL_INSTANCE_MISMATCH')
-            for table,key in [('jrbot_manual_requests','manual'),('jrbot_provider_dispatches','dispatches')]:
-                rows=db.execute('SELECT '+('request_id' if key=='manual' else 'dispatch_id')+',document FROM '+table+' WHERE instance=?',(self.instance,)).fetchall()
-                if len(rows)>10000:fail('STATE_CAPACITY')
-                state[key]={r[0]:json.loads(r[1]) for r in rows}
-            state['requests']={r[0]:(json.loads(r[1]) if r[1] is not None else dict(binding='__legacy_v1__',dispatch_id=r[2])) for r in db.execute('SELECT request_key,document,dispatch_id FROM jrbot_provider_requests WHERE instance=?',(self.instance,))}
-            if len(state['requests'])>10000:fail('STATE_CAPACITY')
             rows=[dict(r) for r in db.execute('SELECT * FROM tbl_jobs WHERE bot_name=? COLLATE BINARY ORDER BY id',(_db_bot(self.instance),))]
+            manual_active=self._load_work(db,state,operation,data,rows)
+            before=copy.deepcopy(state)
             seen=set()
             for row in rows:
                 jid=str(row['id']);seen.add(jid)
                 if row['log_mode'] not in MODES:fail('LOG_MODE_INVALID')
                 old=state['jobs'].get(jid)
-                lock_owner=row.get('locked_by')
-                lock_until=row.get('locked_until_utc')
+                lock_owner=row.get('locked_by');lock_until=row.get('locked_until_utc')
                 foreign_lock=bool(lock_owner and lock_owner not in state['dispatches'] and
                     (not lock_until or time(lock_until.replace(' ','T')+'Z')>now))
                 if old:old['externally_blocked']=foreign_lock
@@ -396,7 +489,6 @@ class SQLiteFoundation:
                 if old and old['fingerprint']==fp:
                     if old['projected_next']!=row['next_run_utc']:fail('SCHEDULE_EXTERNAL_CHANGE')
                     continue
-                # A disabled supported definition is still eligible for explicit manual requests.
                 mapped=dict(row,enabled=1)
                 try:definition=_source_job(mapped,self.instance,old['definition']['job_revision']+1 if old else 1)
                 except ProviderStateError:
@@ -410,39 +502,99 @@ class SQLiteFoundation:
                     if req['job_id']==jid and req['state']=='pending':req.update(state='cancelled',reason='job_deleted')
                 del state['jobs'][jid]
             expire(state,now)
-            before={k:d['status'] for k,d in state['dispatches'].items()}
             if operation=='request_manual':result=request_manual(state,data,actor,now)
             elif operation=='inspect':result=copy.deepcopy(state)
             else:result=transition(state,operation,data,self.runner,self.session,now)
+            relational={str(r['id']):r for r in rows}
             for jid,job in state['jobs'].items():
                 next_sql=job['next_for'].replace('T',' ').removesuffix('Z') if job['next_for'] else None
-                db.execute('UPDATE tbl_jobs SET next_run_utc=? WHERE id=? AND bot_name=? COLLATE BINARY',(next_sql,int(jid),_db_bot(self.instance)))
+                if jid in relational and relational[jid]['next_run_utc']!=next_sql:
+                    db.execute('UPDATE tbl_jobs SET next_run_utc=? WHERE id=? AND bot_name=? COLLATE BINARY',(next_sql,int(jid),_db_bot(self.instance)))
                 job['projected_next']=next_sql
             for did,d in state['dispatches'].items():
+                old=before['dispatches'].get(did)
+                if old==d:continue
                 lease=d['lease'];jid=int(lease['job_id'])
-                if did not in before:
+                if old is None:
+                    if db.execute('SELECT 1 FROM jrbot_provider_dispatches WHERE instance=? AND dispatch_id=?',(self.instance,did)).fetchone():fail('DISPATCH_CONFLICT')
                     db.execute('UPDATE tbl_jobs SET locked_by=?,locked_until_utc=?,last_dispatch_utc=? WHERE id=? AND bot_name=? COLLATE BINARY',(did,lease['lease_expires_at'].replace('T',' ').removesuffix('Z'),stamp(now).replace('T',' ').removesuffix('Z'),jid,_db_bot(self.instance)))
-                if d['status']=='completed' and before.get(did)!='completed':
+                if d['status']=='completed' and (old is None or old['status']!='completed'):
                     report=json.loads(d['report'])
                     if report['execution_started']:
-                        duration=min(int((time(report['finished_at'])-time(report['started_at'])).total_seconds()*1000),2147483647)
-                        ok=int(report['outcome']=='succeeded')
+                        duration=min(int((time(report['finished_at'])-time(report['started_at'])).total_seconds()*1000),2147483647);ok=int(report['outcome']=='succeeded')
                         db.execute('UPDATE tbl_jobs SET last_run_utc=?,last_ok=?,last_message=?,last_duration_ms=? WHERE id=? AND bot_name=? COLLATE BINARY',(report['finished_at'].replace('T',' ').removesuffix('Z'),ok,report['message'],duration,jid,_db_bot(self.instance)))
                         if d['log_mode']=='all' or d['log_mode']=='errors_only' and not ok:
                             db.execute('INSERT INTO tbl_job_log(job_id,bot_name,ran_at,duration_ms,ok,message,instance,dispatch_id,outcome)VALUES(?,?,?,?,?,?,?,?,?)',(jid,_db_bot(self.instance),report['finished_at'].replace('T',' ').removesuffix('Z'),duration,ok,report['message'],self.instance,did,report['outcome']))
                     db.execute('UPDATE tbl_jobs SET locked_by=NULL,locked_until_utc=NULL WHERE id=? AND bot_name=? COLLATE BINARY AND locked_by=?',(jid,_db_bot(self.instance),did))
                 db.execute('INSERT INTO jrbot_provider_dispatches VALUES(?,?,?,?) ON CONFLICT(instance,dispatch_id) DO UPDATE SET status=excluded.status,document=excluded.document',(self.instance,did,d['status'],canonical(d)))
-            # Remove only old active guards, never history rows, then rebind in this same transaction.
-            db.execute('UPDATE jrbot_manual_requests SET active_job_id=NULL WHERE instance=?',(self.instance,))
+            changes=[]
             for rid,req in state['manual'].items():
                 active=req['job_id'] if req['state']=='pending' or req['state']=='dispatched' and state['dispatches'][req['dispatch_id']]['status'] in ('active','unknown') else None
+                if before['manual'].get(rid)!=req or manual_active.get(rid)!=active:
+                    changes.append((rid,req,active))
+            # Release only guards belonging to changed, now terminal requests.
+            for rid,req,active in changes:
+                if active is None and manual_active.get(rid) is not None:
+                    db.execute('UPDATE jrbot_manual_requests SET active_job_id=NULL WHERE instance=? AND request_id=?',(self.instance,rid))
+            for rid,req,active in changes:
                 db.execute('INSERT INTO jrbot_manual_requests VALUES(?,?,?,?,?,?) ON CONFLICT(instance,request_id) DO UPDATE SET state=excluded.state,active_job_id=excluded.active_job_id,document=excluded.document',(self.instance,rid,req['job_id'],req['state'],active,canonical(req)))
             for key,record in state['requests'].items():
-                db.execute('INSERT INTO jrbot_provider_requests(instance,request_key,dispatch_id,document) VALUES(?,?,?,?) ON CONFLICT(instance,request_key) DO NOTHING',(self.instance,key,record['dispatch_id'],canonical(record)))
-            stored=dict(state,manual={},dispatches={},requests={})
-            body=canonical(stored)
+                if key not in before['requests']:
+                    db.execute('INSERT INTO jrbot_provider_requests(instance,request_key,dispatch_id,document) VALUES(?,?,?,?)',(self.instance,key,record['dispatch_id'],canonical(record)))
+            stored=dict(state,manual={},dispatches={},requests={});body=canonical(stored)
             if len(body.encode())>LIMIT:fail('STATE_CAPACITY')
-            db.execute('UPDATE jrbot_provider_state SET document=? WHERE instance=?',(body,self.instance));db.commit();return result
+            if body!=old_body:db.execute('UPDATE jrbot_provider_state SET document=? WHERE instance=?',(body,self.instance))
+            db.commit();return result
         except Exception:
             db.rollback();raise
         finally:db.close()
+
+    def maintain(self, *, now, dispatch_after=None, log_after=0):
+        now=time(now)
+        if dispatch_after is not None:ident(dispatch_after)
+        if type(log_after) is not int or not 0<=log_after<=9223372036854775807:fail('RETENTION_CURSOR_INVALID')
+        checked_path(self.path);db=sqlite3.connect(self.path.as_uri()+'?mode=rw',uri=True);db.row_factory=sqlite3.Row
+        try:
+            db.execute('BEGIN IMMEDIATE');schema_guard_sqlite(db)
+            row=db.execute('SELECT document FROM jrbot_provider_state WHERE instance=?',(self.instance,)).fetchone()
+            if not row:fail('STATE_MISSING')
+            state=json.loads(row[0])
+            if state.get('version')!=2 or state.get('instance')!=self.instance:fail('PROTOCOL_INSTANCE_MISMATCH')
+            dispatches=db.execute("SELECT dispatch_id,status,document FROM jrbot_provider_dispatches WHERE instance=? AND status='completed' AND dispatch_id>? ORDER BY dispatch_id COLLATE BINARY LIMIT 100",(self.instance,dispatch_after or '')).fetchall()
+            logs=db.execute('SELECT id,dispatch_id,ran_at FROM tbl_job_log WHERE instance=? AND dispatch_id IS NOT NULL AND outcome IS NOT NULL AND id>? ORDER BY id LIMIT 100',(self.instance,log_after)).fetchall()
+            result=dict(dispatch_after=dispatch_after,log_after=log_after,dispatch_done=len(dispatches)<100,log_done=len(logs)<100,dispatch_visited=len(dispatches),log_visited=len(logs),dispatch_compacted=0,logs_deleted=0)
+            for row in dispatches:
+                did=ident(row['dispatch_id']);result['dispatch_after']=did;d=json.loads(row['document'])
+                validate_retention_dispatch(d,did)
+                if 'history_detail' in d:continue
+                if retention_finished(d)>now-timedelta(days=30):continue
+                if self._retention_protected(db,d):continue
+                del d['lease']['payload'];d['history_detail']=dict(format=1,state='compacted',compacted_at=stamp(now))
+                db.execute('UPDATE jrbot_provider_dispatches SET document=? WHERE instance=? AND dispatch_id=?',(canonical(d),self.instance,did));result['dispatch_compacted']+=1
+            for row in logs:
+                result['log_after']=row['id']
+                try:ran=time(row['ran_at'].replace(' ','T')+'Z')
+                except (ValueError,TypeError,AttributeError):fail('RETENTION_RECORD_INVALID')
+                if ran>now-timedelta(days=90):continue
+                drow=db.execute('SELECT status,document FROM jrbot_provider_dispatches WHERE instance=? AND dispatch_id=?',(self.instance,row['dispatch_id'])).fetchone()
+                if not drow:continue
+                d=json.loads(drow['document'])
+                if d.get('status')!=drow['status']:fail('RETENTION_RECORD_INVALID')
+                validate_history_detail(d)
+                if drow['status']!='completed':continue
+                validate_retention_dispatch(d,row['dispatch_id'])
+                if retention_finished(d)>now or self._retention_protected(db,d):continue
+                db.execute('DELETE FROM tbl_job_log WHERE instance=? AND id=?',(self.instance,row['id']));result['logs_deleted']+=1
+            db.commit();return result
+        except Exception:
+            db.rollback();raise
+        finally:db.close()
+
+    def _retention_protected(self, db, d):
+        rid=d['lease'].get('request_id')
+        if rid is None:return False
+        row=db.execute('SELECT document,active_job_id FROM jrbot_manual_requests WHERE instance=? AND request_id=?',(self.instance,rid)).fetchone()
+        if not row:fail('RETENTION_RECORD_INVALID')
+        r=json.loads(row['document'])
+        if r.get('dispatch_id')!=d['lease']['dispatch_id'] or r.get('job_id')!=d['lease']['job_id']:fail('RETENTION_RECORD_INVALID')
+        return row['active_job_id'] is not None or r.get('state')=='pending'
